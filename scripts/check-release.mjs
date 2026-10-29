@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {readFile,stat} from 'node:fs/promises';
+const json=async file=>JSON.parse(await readFile(file,'utf8'));
+const [manifest,pkg,versions,built]=await Promise.all(['manifest.json','package.json','versions.json','dist/manifest.json'].map(json));
+assert.match(manifest.id,/^[a-z]+(?:-[a-z]+)*$/);
+assert.equal(manifest.id,'nosygrid');assert.equal(manifest.name,'NosyGrid');
+assert.match(manifest.version,/^\d+\.\d+\.\d+$/);assert.equal(pkg.version,manifest.version);
+assert.equal(pkg.license,'MIT');assert.equal(versions[manifest.version],manifest.minAppVersion);assert.deepEqual(built,manifest);
+if(process.env.RELEASE_TAG)assert.equal(process.env.RELEASE_TAG,manifest.version,'Release tag must equal the manifest version, without a v prefix');
+for(const file of ['dist/main.js','dist/styles.css','LICENSE','THIRD_PARTY_NOTICES.md'])assert.ok((await stat(file)).size>0);
+const readme=await readFile('README.md','utf8');
+for(const match of readme.matchAll(/!\[[^\]]*\]\((docs\/images\/[^)]+)\)/g))assert.ok((await stat(match[1])).size>0);
+console.log(`Release ${manifest.version} validated: manifest, MIT license, assets, screenshots and version map.`);

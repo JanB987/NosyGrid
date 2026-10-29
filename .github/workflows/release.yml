@@ -1,0 +1,46 @@
+name: Release
+on:
+  push:
+    tags: ['*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag, matching manifest.json
+        required: true
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright-core install --with-deps chromium
+      - name: Locate Chromium
+        run: |
+          BROWSER_PATH=$(node -p "require('playwright-core').chromium.executablePath()")
+          echo "OBSIDIAN_TEST_BROWSER=$BROWSER_PATH" >> "$GITHUB_ENV"
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm run check:release
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      - name: Publish Obsidian release files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/main.js dist/manifest.json dist/styles.css LICENSE THIRD_PARTY_NOTICES.md --clobber
+          elif [ -f "docs/releases/$TAG.md" ]; then
+            gh release create "$TAG" --verify-tag --title "NosyGrid $TAG" --notes-file "docs/releases/$TAG.md" dist/main.js dist/manifest.json dist/styles.css LICENSE THIRD_PARTY_NOTICES.md
+          else
+            gh release create "$TAG" --verify-tag --title "NosyGrid $TAG" --generate-notes dist/main.js dist/manifest.json dist/styles.css LICENSE THIRD_PARTY_NOTICES.md
+          fi

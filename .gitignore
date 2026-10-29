@@ -1,0 +1,11 @@
+node_modules/
+.npm-cache/
+dist/
+test-build/
+main.js
+migration-backups/
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db
