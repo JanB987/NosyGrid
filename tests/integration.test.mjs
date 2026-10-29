@@ -1567,3 +1567,16 @@ test('manual group positions retain temporarily absent values when another value
   ctx.records.get('Note 3.md').fm.team='C';ctx.records.get('Note 4.md').fm.team='C';ctx.view.onDataUpdated();await dropGroup(ctx,groupHeader(ctx,'note.team: C'),groupHeader(ctx,'note.team: A'));assert.deepEqual(stageColumns(ctx),[['note.team: C','note.team: A']]);
   ctx.records.get('Note 3.md').fm.team='B';ctx.view.onDataUpdated();assert.deepEqual(stageColumns(ctx),[['note.team: B','note.team: C','note.team: A']]);assert.equal(ctx.writes,0);
 });
+
+
+test('reserved native summary settings load, persist and reopen independently of custom view options',async()=>{
+  const ctx=setup();summaryAPI(ctx);const saved={'note.priority':'Sum'},doc=ctx.dom.window.document;
+  ctx.view.config.getSummaryKey=property=>saved[property]??null;
+  ctx.view.config.setSummaryKey=(property,key)=>{if(key===null)delete saved[property];else saved[property]=key;};
+  ctx.view.onDataUpdated();assert.equal(totalSummary(ctx),'6');assert.equal(ctx.options.summaries,undefined);
+  doc.querySelector('button[aria-label="Summarize note.priority"]').click();[...doc.querySelectorAll('.mock-menu button')].find(button=>button.textContent==='None').click();await settle(ctx);
+  assert.deepEqual(saved,{});assert.equal(totalSummary(ctx),undefined);
+  doc.querySelector('button[aria-label="Summarize note.priority"]').click();[...doc.querySelectorAll('.mock-menu button')].find(button=>button.textContent==='Sum').click();await settle(ctx);
+  assert.deepEqual(saved,{'note.priority':'Sum'});assert.equal(ctx.options.summaries,undefined);
+  const {config,data}=ctx.view;ctx.view.unload();ctx.view=new ManualOrderView({app:ctx.app},doc.getElementById('view'),ctx.plugin);ctx.view.config=config;ctx.view.data=data;ctx.view.onDataUpdated();assert.equal(totalSummary(ctx),'6');assert.equal(ctx.writes,0);
+});

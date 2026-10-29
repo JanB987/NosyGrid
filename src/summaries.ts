@@ -1,8 +1,26 @@
-import {Menu,Modal,type App,type BasesPropertyId,type BasesEntry,type BasesQueryResult,type QueryController,type Value} from 'obsidian';
+import {Menu,Modal,type App,type BasesPropertyId,type BasesEntry,type BasesQueryResult,type QueryController,type Value,type BasesViewConfig} from 'obsidian';
 export const SUMMARIES_KEY='summaries';
 export function readSummaries(raw:unknown):Record<string,string> {
   if(!raw||typeof raw!=='object'||Array.isArray(raw))return {};
   return Object.fromEntries(Object.entries(raw).filter(([key,value])=>key.trim()&&typeof value==='string'&&value.trim()).map(([key,value])=>[/^(note|file|formula)\./.test(key)?key:`note.${key}`,(value as string).trim()]));
+}
+// Core summaries are reserved view fields, not custom options returned by get().
+// These capability-checked accessors exist in Obsidian but are absent from its SDK declaration.
+interface NativeSummaryConfig {
+  getSummaryKey?:(property:BasesPropertyId)=>unknown;
+  setSummaryKey?:(property:BasesPropertyId,key:string|null)=>void;
+}
+export function readViewSummaries(config:BasesViewConfig,properties:BasesPropertyId[]):Record<string,string> {
+  const result=readSummaries(config.get(SUMMARIES_KEY)),native=config as BasesViewConfig&NativeSummaryConfig;
+  if(typeof native.getSummaryKey!=='function')return result;
+  for(const property of properties){const value:unknown=native.getSummaryKey(property);if(typeof value==='string'&&value.trim())result[property]=value.trim();else delete result[property];}
+  return result;
+}
+export function setViewSummary(config:BasesViewConfig,property:BasesPropertyId,key:string|null) {
+  const native=config as BasesViewConfig&NativeSummaryConfig;
+  if(typeof native.setSummaryKey==='function'){native.setSummaryKey(property,key);return;}
+  const next=readSummaries(config.get(SUMMARIES_KEY));if(key)next[property]=key;else delete next[property];
+  config.set(SUMMARIES_KEY,Object.keys(next).length?next:null);
 }
 export function summaryOptions(type:string):string[] {
   const all=['Empty','Filled','Unique'];

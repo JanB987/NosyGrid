@@ -24,7 +24,7 @@ import {GROUP_VALUES_KEY,readValueSettings,addGroupValues,type ValueSection} fro
 import {renderValueMenu} from './group-values-menu';
 import {completeVerticalGroups} from './continuous-groups';
 import {GROUP_COLORS_KEY,readGroupColors,applyGroupColors} from './group-colors';
-import {Summaries,SUMMARIES_KEY,readSummaries,summaryMenu} from './summaries';
+import {Summaries,readViewSummaries,setViewSummary,summaryMenu} from './summaries';
 
 import {expectRecord,fileProperties,boardProperty} from './validation';
 import {caretRangeAtPoint} from './caret-position';
@@ -275,7 +275,7 @@ export class ManualOrderView extends BasesView {
     this.root = parent.createDiv({cls:'manual-order-bases'});
     this.rowDragScroll=new RowDragScroll(this.root);
     this.rowDragPreview=new RowDragPreview(this.root);this.register(()=>this.rowDragPreview.destroy());
-    this.summaries=new Summaries(this.root,controller,this.app,()=>readSummaries(this.config.get(SUMMARIES_KEY)),property=>this.config.getDisplayName(property),(property,event)=>this.openSummaryMenu(property,event));
+    this.summaries=new Summaries(this.root,controller,this.app,()=>readViewSummaries(this.config,this.summaryColumns()),property=>this.config.getDisplayName(property),(property,event)=>this.openSummaryMenu(property,event));
     this.boardOrder=new BoardOrder(this.root,()=>this.config.get(BOARD_ORDER_KEY),value=>this.config.set(BOARD_ORDER_KEY,value),()=>this.onDataUpdated(),error=>new Notice(`Could not save group positions: ${String(error)}`),()=>!this.plugin.busy&&!this.plugin.editorOwner&&!this.movingRows&&!this.rowDropPending&&!this.boardLayout.active);
     const doc=this.root.ownerDocument;
     doc.addEventListener('pointerdown',this.rowSelectionPointer,true);doc.addEventListener('click',this.rowSelectionClick,true);
@@ -680,11 +680,10 @@ export class ManualOrderView extends BasesView {
   private openSummaryMenu(property:BasesPropertyId,event:MouseEvent) {
     const sample=this.data.data.map(entry=>entry.getValue(property)).find(value=>value&&(value.constructor as typeof Value).type!=='null');
     const type=(sample?.constructor as typeof Value|undefined)?.type??this.plugin.propertyType(property,this.data.data);
-    summaryMenu(this.app,property,this.config.getDisplayName(property),type,readSummaries(this.config.get(SUMMARIES_KEY))[property],event,key=>{
+    summaryMenu(this.app,property,this.config.getDisplayName(property),type,readViewSummaries(this.config,[property])[property],event,key=>{
       void (async()=>{
         if(this.editor&&!(await this.editor.save()))return;
-        const next=readSummaries(this.config.get(SUMMARIES_KEY));if(key)next[property]=key;else delete next[property];
-        try{this.config.set(SUMMARIES_KEY,Object.keys(next).length?next:null);this.onDataUpdated();}catch(error){new Notice(`Could not save summary: ${String(error)}`);}
+        try{setViewSummary(this.config,property,key);this.onDataUpdated();}catch(error){new Notice(`Could not save summary: ${String(error)}`);}
       })();
     });
   }

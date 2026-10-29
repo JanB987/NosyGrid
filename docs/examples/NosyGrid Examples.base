@@ -1,0 +1,95 @@
+{
+  "filters": {
+    "and": [
+      "file.ext == \"md\"",
+      "file.folder.endsWith(\"Screenshot Demo\")",
+      "demo == true"
+    ]
+  },
+  "properties": {
+    "file.name": {
+      "displayName": "Note"
+    },
+    "note.project": {
+      "displayName": "Project"
+    },
+    "note.status": {
+      "displayName": "Status"
+    },
+    "note.owner": {
+      "displayName": "Owner"
+    },
+    "note.priority": {
+      "displayName": "Rank"
+    },
+    "note.estimate": {
+      "displayName": "Estimate"
+    },
+    "note.related": {
+      "displayName": "Related"
+    }
+  },
+  "views": [
+    {
+      "type": "manual-order-table",
+      "name": "Roadmap board",
+      "orderProperty": "priority",
+      "orderDirection": "asc",
+      "order": [
+        "file.name",
+        "note.estimate"
+      ],
+      "manualGroups": [
+        {
+          "property": "note.project",
+          "direction": "asc"
+        },
+        {
+          "property": "note.status",
+          "direction": "asc",
+          "layout": "vertical"
+        }
+      ],
+      "manualGroupWidths": {
+        "[\"group-width\",\"note.status\",\"string:Backlog\"]": 320,
+        "[\"group-width\",\"note.status\",\"string:In progress\"]": 320,
+        "[\"group-width\",\"note.status\",\"string:Review\"]": 320,
+        "[\"group-width\",\"note.status\",\"string:Done\"]": 320
+      },
+      "manualGroupColors": {
+        "[\"group-width\",\"note.status\",\"string:Backlog\"]": "#8695ae",
+        "[\"group-width\",\"note.status\",\"string:In progress\"]": "#6c9cff",
+        "[\"group-width\",\"note.status\",\"string:Review\"]": "#b48eff",
+        "[\"group-width\",\"note.status\",\"string:Done\"]": "#5ac89a"
+      },
+      "manualVerticalGroupOrder": {
+        "[\"board\",\"note.status\",[]]": [
+          "[\"group-width\",\"note.status\",\"string:Backlog\"]",
+          "[\"group-width\",\"note.status\",\"string:In progress\"]",
+          "[\"group-width\",\"note.status\",\"string:Review\"]",
+          "[\"group-width\",\"note.status\",\"string:Done\"]"
+        ]
+      },
+      "summaries": {
+        "note.estimate": "Sum"
+      }
+    },
+    {
+      "type": "manual-order-table",
+      "name": "Editable table",
+      "orderProperty": "priority",
+      "orderDirection": "asc",
+      "order": [
+        "file.name",
+        "note.status",
+        "note.owner",
+        "note.priority",
+        "note.estimate",
+        "note.related"
+      ],
+      "summaries": {
+        "note.estimate": "Sum"
+      }
+    }
+  ]
+}

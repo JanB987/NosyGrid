@@ -6,7 +6,7 @@ Organize notes in a grid, drag rows between groups, edit their properties in pla
 
 ![NosyGrid board with colored status columns, project sections, and summaries](docs/images/overview.png)
 
-*Screenshots use fictional demonstration notes and render the actual plugin view in a local browser demo.*
+*Real captures from Obsidian 1.15.0 on Windows, using the included fictional [example notes and Base](docs/examples). Images are cropped, with no replacement UI. Appearance reflects the capture vault’s theme and settings. See [capture details](docs/images/README.md).*
 
 ## Features
 
@@ -22,7 +22,7 @@ Organize notes in a grid, drag rows between groups, edit their properties in pla
 
 ## Install
 
-Requires **Obsidian 1.10.2 or newer** and the **Bases** core plugin. This first release has not yet been approved for the Community plugins directory.
+Declares a minimum of **Obsidian 1.10.2** and the **Bases** core plugin. The plugin has not yet been approved for the Community plugins directory.
 
 ### Manual installation
 
@@ -72,6 +72,10 @@ For example, dragging Note B above Note A changes their ranks:
 
 Only values that need changing are written. Empty ranks sort after numbered ranks; text ranks such as `high` or `"1"` do not enable manual ordering.
 
+## Try the screenshot examples
+
+Copy the contents of [docs/examples](docs/examples) into a folder named **Screenshot Demo** in a test vault. Open **NosyGrid Examples.base**, then choose **Roadmap board** or **Editable table**. The filter requires that folder name and `demo: true`; the twelve notes are fictional and their estimates sum to 34.
+
 ## Edit notes in place
 
 Click a cell to edit it. Enter saves; Tab saves and advances; Escape cancels an uncommitted edit. List cells provide an item editor, removal controls and a blank row for new entries. Long lists can expand the row, and the expanded height is saved in the view.
@@ -92,15 +96,13 @@ Drag the right edge to resize a column. Click its header to collapse it to a rai
 
 A row becomes selected as soon as you press its handle. Dragging past the normal movement threshold lifts the selected rows into a preview. **Ctrl/Cmd-click** toggles individual rows; **Shift-click** selects the visible range from the anchor. Dragging a selected handle preserves the block. Clicking a cell or empty space clears row selection and starts the next action.
 
-![A multi-row drag preview with source placeholders](docs/images/dragging.png)
-
 Dropping into a group assigns the destination's grouping values, including its ancestors. A positioned drop also updates numeric ranks in the destination. Empty groups accept rows. Releasing outside a recognized destination, pressing Escape or cancelling the drag restores the originals without a write.
 
 ## Summaries
 
 Click a column's calculator icon or right-click its header. Numeric properties offer Sum, Average, Min, Max, Median, Range and Stddev. All types offer Empty, Filled and Unique; dates and checkboxes have their native functions.
 
-Summaries appear in group headers, including collapsed groups, and in a **Total** row below the view. Totals exclude hidden groups, include collapsed groups, and count each visible note once. Choose **None** to remove a summary. Custom formulas must already be defined in the Base; **Use custom summary…** selects one by name.
+Summaries appear in group headers, including collapsed groups, and in a **Total** row below the view. Totals exclude hidden groups, include collapsed groups, and count each visible note once. Choose **None** to remove a summary. Summary persistence currently uses capability-checked Obsidian core accessors that are absent from the public SDK declarations. Custom formulas must already be defined in the Base; **Use custom summary…** selects one by name.
 
 ## What gets saved
 
@@ -110,18 +112,19 @@ Summaries appear in group headers, including collapsed groups, and in a **Total*
 
 Opening a view does not normalize note data. Reordering affects the current leaf group and query results, not notes excluded by a filter or limit. Hidden notes can retain duplicate ranks. Undo history lasts for the current plugin session and is separate from Obsidian's text-editor undo.
 
-Formula and computed file properties are read-only. A layout rebuild is still needed when files enter or leave the query, grouping changes, files are renamed or columns change. Desktop mouse/keyboard interactions are covered by browser tests; mobile touch dragging has not been validated.
+Formula and computed file properties are read-only. A layout rebuild is still needed when files enter or leave the query, grouping changes, files are renamed or columns change. Automated desktop interaction tests use mock Obsidian APIs. The documentation examples were also checked in Obsidian 1.15.0 on Windows; this is not a full compatibility test of every feature, theme or Obsidian version. Mobile touch dragging has not been validated.
 
 ## Development and releases
 
 - `npm run build` produces the three distributable files in `dist/`.
-- `npm run screenshots` regenerates the fictional demo screenshots with Chromium/Edge.
+- `npm run screenshots:demo` creates mock-browser development images in `test-build/demo-images/`. These are not documentation screenshots.
+- README images must be captured in Obsidian using the included example files; see [capture details](docs/images/README.md).
 - `npm run check:release` checks version metadata, the release files and README images.
 - `npm run lint` enforces the Obsidian checker rules and strict unsafe-value checks with zero warnings.
 - The test suite covers editing, selection, clipboard, links, row/group moves, cancellation, persistence, colors, summaries and browser layouts.
 - A tag matching `manifest.json` (for example, `0.26.1`, without `v`) triggers the release workflow.
 
-See [detailed usage notes](docs/usage.md), [release notes](docs/releases/0.26.2.md) and [Obsidian's plugin submission guide](https://docs.obsidian.md/Plugins/Releasing/Submit%20your%20plugin).
+See [detailed usage notes](docs/usage.md), [release notes](docs/releases/0.26.3.md) and [Obsidian's plugin submission guide](https://docs.obsidian.md/Plugins/Releasing/Submit%20your%20plugin).
 
 ## Feedback and license
 
