@@ -56,7 +56,7 @@ export class BoardAlignment {
       const indexes=new Map(plan.slots.map((slot,index)=>[slot,index+1]));
       for(const board of boards) {
         board.classList.add('manual-order-aligned-board');board.style.gridTemplateColumns=widths.map(width=>`${width}px`).join(' ');
-        for(const column of board.querySelectorAll<HTMLElement>(':scope > .manual-order-board-column')){column.style.gridColumn=String(indexes.get(column.dataset.groupWidthKey!)??1);column.style.gridRow='1';}
+        for(const column of board.querySelectorAll<HTMLElement>(':scope > .manual-order-board-column')){column.style.gridColumn=String(indexes.get(column.dataset.groupWidthKey!)??1);}
       }
     }
   }

@@ -10,7 +10,7 @@ export function linkedBoardWidthKey(property:string,valueKey:string):string {ret
 function legacyWidthGroup(key:string):string|undefined {
   try {
     const path:unknown=JSON.parse(key);if(!Array.isArray(path)||path.length<2)return;
-    const [property,value]=path.slice(-2);
+    const parts:unknown[]=path;const [property,value]=parts.slice(-2);
     if(typeof property==='string'&&/^(note|file|formula)\..+/.test(property)&&typeof value==='string')return linkedBoardWidthKey(property,value);
   } catch {/* Non-group keys from older versions are left alone. */}
 }

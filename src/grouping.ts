@@ -1,4 +1,5 @@
 import type {BasesPropertyId} from 'obsidian';
+import {isRecord} from './validation';
 
 export const GROUPS_KEY='manualGroups';
 export const COLLAPSED_KEY='manualCollapsedGroups';
@@ -10,8 +11,9 @@ export interface RowGroup<T> {key:string;label:string;property?:BasesPropertyId;
 export function readGroupRules(value:unknown):GroupRule[] {
   if(!Array.isArray(value))return [];
   const seen=new Set<string>();
-  return value.flatMap(rule=>{
-    if(!rule||typeof rule!=='object'||typeof rule.property!=='string'||! /^(note|file|formula)\..+/.test(rule.property)||seen.has(rule.property))return [];
+  const rules:unknown[]=value;
+  return rules.flatMap(rule=>{
+    if(!isRecord(rule)||typeof rule.property!=='string'||! /^(note|file|formula)\..+/.test(rule.property)||seen.has(rule.property))return [];
     seen.add(rule.property);return [{property:rule.property as BasesPropertyId,direction:rule.direction==='desc'?'desc' as const:'asc' as const,...(rule.layout==='vertical'?{layout:'vertical' as const}:{})}];
   });
 }

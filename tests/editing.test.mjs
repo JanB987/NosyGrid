@@ -31,6 +31,8 @@ test('file moves stay within the vault and retain file type',()=>{
   const snapshot={file,path:file.path,property:'file.path',exists:true,value:file.path};
   assert.equal(renameTarget(snapshot,'Existing/Renamed.md'),'Existing/Renamed.md');
   for(const path of ['../outside.md','/absolute.md','C:/outside.md','Folder//empty.md','Folder/new.txt']) assert.throws(()=>renameTarget(snapshot,path));
+  for(let code=0;code<32;code++)assert.throws(()=>renameTarget(snapshot,`Folder/a${String.fromCharCode(code)}b.md`));
+  assert.equal(renameTarget(snapshot,'Folder/a b.md'),'Folder/a b.md');
   assert.equal(renameTarget({...snapshot,property:'file.basename'},'Renamed'),'Folder/Renamed.md');
   assert.equal(renameTarget({...snapshot,property:'file.folder'},''),'Original.md');
 });

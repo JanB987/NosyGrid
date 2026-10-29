@@ -20,11 +20,14 @@ import {RowDragScroll} from './row-drag-scroll';
 import {RowDragPreview} from './row-drag-preview';
 import {BoardAlignment,boardScopeKey,collectBoardPlans} from './board-alignment';
 import {BoardOrder,BOARD_ORDER_KEY,readBoardOrders,applyBoardOrder} from './board-order';
-import {GROUP_VALUES_KEY,readValueSettings,addGroupValues,type ValueSection,type ValueSettings} from './group-values';
+import {GROUP_VALUES_KEY,readValueSettings,addGroupValues,type ValueSection} from './group-values';
 import {renderValueMenu} from './group-values-menu';
 import {completeVerticalGroups} from './continuous-groups';
 import {GROUP_COLORS_KEY,readGroupColors,applyGroupColors} from './group-colors';
 import {Summaries,SUMMARIES_KEY,readSummaries,summaryMenu} from './summaries';
+
+import {expectRecord,fileProperties,boardProperty} from './validation';
+import {caretRangeAtPoint} from './caret-position';
 
 const VIEW = 'manual-order-table';
 interface TableRow extends Row { entry: BasesEntry }
@@ -33,7 +36,7 @@ interface Receipt { property: string; changes: Change[]; originals: Map<string, 
 type EditHistory=CellEdit|{changes:CellEdit[]};
 
 export default class ManualOrderPlugin extends Plugin {
-  private availabilityTimer?:ReturnType<typeof setTimeout>;
+  private availabilityTimer?:number;
   busy = false;
   batchWriting=false;
   views = new Set<ManualOrderView>();
@@ -62,13 +65,13 @@ export default class ManualOrderPlugin extends Plugin {
     this.addCommand({id:'undo-reorder',name:'Undo last row reorder',callback:()=>void this.undo()});
     this.addCommand({id:'undo-cell-edit',name:'Undo last table cell edit',callback:()=>void this.undoEdit()});
     const availability=()=>{
-      if(this.availabilityTimer)clearTimeout(this.availabilityTimer);
-      this.availabilityTimer=setTimeout(()=>{this.availabilityTimer=undefined;for(const view of this.views)view.refreshGroupAvailability();},150);
+      if(this.availabilityTimer!==undefined)window.clearTimeout(this.availabilityTimer);
+      this.availabilityTimer=window.setTimeout(()=>{this.availabilityTimer=undefined;for(const view of this.views)view.refreshGroupAvailability();},150);
     };
     this.registerEvent(this.app.metadataCache.on('changed',availability));
     this.registerEvent(this.app.vault.on('delete',availability));
     this.registerEvent(this.app.vault.on('rename',availability));
-    this.register(()=>{if(this.availabilityTimer)clearTimeout(this.availabilityTimer);});
+    this.register(()=>{if(this.availabilityTimer!==undefined)window.clearTimeout(this.availabilityTimer);});
   }
 
   refresh() { for (const view of this.views) view.onDataUpdated(); }
@@ -80,7 +83,7 @@ export default class ManualOrderPlugin extends Plugin {
     const path=`${this.app.vault.configDir}/types.json`;
     try {
       this.propertyTypes=await this.app.vault.adapter.exists(path)
-        ? parsePropertyTypes(await this.app.vault.adapter.read(path)) : new Map();
+        ? parsePropertyTypes(await this.app.vault.adapter.read(path)) : new Map<string,EditorType>();
       this.inferredTypes.clear();
     } catch(error) { console.warn('NosyGrid: unable to read property types; keeping the last known definitions.',error); }
   }
@@ -96,7 +99,7 @@ export default class ManualOrderPlugin extends Plugin {
     // Infer once per property across the vault, never from the clicked cell.
     const files=this.app.vault.getMarkdownFiles?.()??entries.map(entry=>entry.file);
     const sample=[...files].sort((a,b)=>a.path.localeCompare(b.path))
-      .map(file=>this.app.metadataCache.getFileCache(file)?.frontmatter?.[name])
+      .map(file=>fileProperties(this.app,file)[name])
       .find(value=>value!==undefined && value!==null && value!=='');
     const type=inferType(sample,name);
     if(sample!==undefined) this.inferredTypes.set(name,type);
@@ -178,14 +181,16 @@ export default class ManualOrderPlugin extends Plugin {
         if (!file || file.extension !== 'md') throw new Error(`Cannot write ${change.path}.`);
         const text = await this.app.vault.read(file);
         const info = getFrontMatterInfo(text);
-        const fm = info.exists ? parseYaml(info.frontmatter) ?? {} : {};
+        const parsed:unknown=info.exists ? parseYaml(info.frontmatter) ?? {} : {};
+        const fm=expectRecord(parsed);
         if (numericRank(fm[receipt.property]) !== change.before) throw new Error(`${file.basename} changed. Please try again.`);
         if (!undo) receipt.originals.set(change.path,{exists:Object.hasOwn(fm,receipt.property),value:fm[receipt.property]});
       }
       await applyChanges(changes, async change => {
         const file = this.app.vault.getFileByPath(change.path);
         if (!file) throw new Error(`Missing note: ${change.path}`);
-        await this.app.fileManager.processFrontMatter(file, fm => {
+        await this.app.fileManager.processFrontMatter(file, (raw:unknown) => {
+          const fm=expectRecord(raw);
           if (numericRank(fm[receipt.property]) !== change.before) throw new Error(`${file.basename} changed during the reorder.`);
           const original = receipt.originals.get(change.path);
           // Restore empty/null values exactly on undo or rollback.
@@ -541,8 +546,8 @@ export class ManualOrderView extends BasesView {
     sortGroups(retained.groups);
     const boardPlans=collectBoardPlans(retained.groups,verticalGroup,groupWidthKey,compareGroups);
     for(const [scope,plan]of boardPlans) {
-      const property=JSON.parse(scope)[1] as string;
-      plan.slots=applyBoardOrder(plan.slots,valueSettings[property]?.order);
+      const property=boardProperty(scope);
+      plan.slots=applyBoardOrder(plan.slots,property?valueSettings[property]?.order:undefined);
     }
     this.boardOrder.begin(boardPlans);this.boardAlignment.begin(boardPlans);
     const sections=new Map<string,ValueSection>();
@@ -578,7 +583,7 @@ export class ManualOrderView extends BasesView {
     };
     hideValues(retained.groups);
     for(const [scope,plan]of boardPlans) {
-      const hidden=valueSettings[JSON.parse(scope)[1]]?.hidden??[];plan.slots=plan.slots.filter(id=>!hidden.includes(id));
+      const hidden=valueSettings[boardProperty(scope)??'']?.hidden??[];plan.slots=plan.slots.filter(id=>!hidden.includes(id));
     }
     const menu=this.root.querySelector<HTMLElement>('.manual-order-group-menu');if(menu){menu.empty();this.renderGroupControls(menu);}
     this.nativeGroupMenu.refresh();
@@ -723,7 +728,7 @@ export class ManualOrderView extends BasesView {
             }
             this.config.set(GROUP_VALUES_KEY,{...settings,[section.property]:next});this.onDataUpdated();this.nativeGroupMenu.refresh();
           } catch(error) {
-            try{this.config.set(GROUP_VALUES_KEY,previous??null);this.config.set(BOARD_ORDER_KEY,previousOrder??null);}catch{}
+            try{this.config.set(GROUP_VALUES_KEY,previous??null);this.config.set(BOARD_ORDER_KEY,previousOrder??null);}catch(rollbackError){console.error('NosyGrid: could not restore view settings.',rollbackError);}
             new Notice(`Could not save group values: ${String(error)}`);this.onDataUpdated();this.nativeGroupMenu.refresh();
           }
         })();
@@ -735,7 +740,7 @@ export class ManualOrderView extends BasesView {
             const previous=this.config.get(GROUP_COLORS_KEY),colors=readGroupColors(previous);
             if(color)colors[id]=color;else delete colors[id];
             try{this.config.set(GROUP_COLORS_KEY,Object.keys(colors).length?colors:null);this.onDataUpdated();}
-            catch(error){try{this.config.set(GROUP_COLORS_KEY,previous??null);}catch{}new Notice(`Could not save group color: ${String(error)}`);applyGroupColors(this.root,readGroupColors(previous));}
+            catch(error){try{this.config.set(GROUP_COLORS_KEY,previous??null);}catch(rollbackError){console.error('NosyGrid: could not restore view settings.',rollbackError);}new Notice(`Could not save group color: ${String(error)}`);applyGroupColors(this.root,readGroupColors(previous));}
             const menu=this.root.querySelector<HTMLElement>('.manual-order-group-menu');if(menu){menu.empty();this.renderGroupControls(menu);}this.nativeGroupMenu.refresh();
           })();
         },
@@ -1008,7 +1013,7 @@ export class ManualOrderView extends BasesView {
           if((event.target as HTMLElement).closest('a,button,input,select,textarea')) return;
           let caret:number|undefined;
           let itemIndex:number|undefined;
-          const point=cell.ownerDocument.caretRangeFromPoint?.(event.clientX,event.clientY);
+          const point=caretRangeAtPoint(cell.ownerDocument,event.clientX,event.clientY);
           if(point && cell.contains(point.startContainer)) {
             const item=(event.target as HTMLElement).closest('.manual-order-list-items > li')??point.startContainer.parentElement?.closest('.manual-order-list-items > li');
             if(item)itemIndex=[...item.parentElement!.children].indexOf(item);
@@ -1090,7 +1095,7 @@ export class ManualOrderView extends BasesView {
   private readonly onCopy=(event:ClipboardEvent)=>{
     if(!event.clipboardData)return;
     const target=event.target as HTMLElement;
-    const input=target.closest?.('input,textarea') as HTMLInputElement|HTMLTextAreaElement|null;
+    const input=target.closest?.<HTMLInputElement|HTMLTextAreaElement>('input,textarea');
     // Highlighted editor text keeps the browser's normal copy behavior.
     if(input&&input.selectionStart!==input.selectionEnd&&!(this.editor instanceof ListCellEditor&&this.editor.hasItemSelection()))return;
     if(target.closest?.('select,[contenteditable=true]'))return;
@@ -1194,7 +1199,7 @@ export class ManualOrderView extends BasesView {
   }
 
   private cellValue(entry:BasesEntry, property:BasesPropertyId): CellValue {
-    const fm=this.app.metadataCache.getFileCache(entry.file)?.frontmatter??{};
+    const fm=fileProperties(this.app,entry.file);
     const value={exists:Object.hasOwn(fm,property.slice(5)),value:fm[property.slice(5)]};
     const key=`${entry.file.path}\0${property}`;
     const override=this.plugin.cellOverrides.get(key);

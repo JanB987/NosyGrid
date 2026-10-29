@@ -55,11 +55,11 @@ export class ListCellEditor {
   };
   private readonly itemUp=()=>{this.drag=undefined;};
   private pointerInside=false;
-  private pointerReset?:ReturnType<typeof setTimeout>;
+  private pointerReset?:number;
   private readonly outsidePointerDown=(event:PointerEvent)=>{
     this.pointerInside=this.options.cell.contains(event.target as Node);
-    if(this.pointerReset)clearTimeout(this.pointerReset);
-    this.pointerReset=setTimeout(()=>{this.pointerInside=false;},0);
+    if(this.pointerReset!==undefined)this.options.cell.ownerDocument.defaultView?.clearTimeout(this.pointerReset);
+    this.pointerReset=this.options.cell.ownerDocument.defaultView?.setTimeout(()=>{this.pointerInside=false;},0);
     if(!this.closed&&!this.options.cell.contains(event.target as Node)&&!(event.target as Element).closest?.('.suggestion-container'))void this.save();
   };
   private readonly cellMouseDown=(event:MouseEvent)=>{
@@ -166,7 +166,7 @@ export class ListCellEditor {
     remove.hidden=!initial.trim()&&!existing;this.resize(item);return item;
   }
 
-  private resize(item:Item) {item.input.style.height='auto';item.input.style.height=`${Math.max(20,item.input.scrollHeight)}px`;}
+  private resize(item:Item) {item.input.classList.add('is-measuring-list-item');const height=Math.max(20,item.input.scrollHeight);item.input.classList.remove('is-measuring-list-item');item.input.style.height=`${height}px`;}
   private normalizeLines() {
     for(const item of [...this.items]) {
       if(!/[\r\n]/.test(item.input.value)||item.input.value===item.initial)continue;
@@ -238,5 +238,5 @@ export class ListCellEditor {
   }
   private setReadOnly(value:boolean) {for(const item of this.items){item.input.readOnly=value;item.remove.disabled=value;}}
   cancel() {if(!this.pending&&!this.closed){this.dispose();this.options.close(0);}}
-  dispose() {this.closed=true;if(this.pointerReset)clearTimeout(this.pointerReset);this.host.removeEventListener('pointerdown',this.itemDown);this.options.cell.ownerDocument.removeEventListener('pointermove',this.itemMove);this.options.cell.ownerDocument.removeEventListener('pointerup',this.itemUp);this.options.cell.removeEventListener('mousedown',this.cellMouseDown);this.options.cell.ownerDocument.removeEventListener('pointerdown',this.outsidePointerDown);this.items.forEach(item=>{item.suggest?.destroy();item.removeDrag?.();});}
+  dispose() {this.closed=true;if(this.pointerReset!==undefined)this.options.cell.ownerDocument.defaultView?.clearTimeout(this.pointerReset);this.host.removeEventListener('pointerdown',this.itemDown);this.options.cell.ownerDocument.removeEventListener('pointermove',this.itemMove);this.options.cell.ownerDocument.removeEventListener('pointerup',this.itemUp);this.options.cell.removeEventListener('mousedown',this.cellMouseDown);this.options.cell.ownerDocument.removeEventListener('pointerdown',this.outsidePointerDown);this.items.forEach(item=>{item.suggest?.destroy();item.removeDrag?.();});}
 }

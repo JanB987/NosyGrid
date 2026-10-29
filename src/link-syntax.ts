@@ -12,7 +12,7 @@ export function activeWikilink(text:string,caret:number,end=caret):WikiContext|u
   const start=text.lastIndexOf('[[',caret-1);
   if(start<0 || caret<start+2 || escaped(text,start)) return;
   const before=text.slice(start+2,caret);
-  if(/[\r\n\[\]]/.test(before) || before.includes('|')) return;
+  if(/[\r\n[\]]/.test(before) || before.includes('|')) return;
   const close=text.indexOf(']]',start+2);
   const boundary=text.slice(caret).search(/[\r\n]|\[\[/);
   const hasClose=close>=caret && (boundary<0 || close<caret+boundary);
@@ -33,10 +33,10 @@ export function replaceWikilink(text:string,context:WikiContext,target:string,al
 /** Preserve all surrounding text, including multiple links in the same list item. */
 export function splitWikilinks(text:string):WikiPart[] {
   const result:WikiPart[]=[];
-  const pattern=/\[\[([^\[\]\r\n]+)\]\]/g;
+  const pattern=/\[\[([^[\]\r\n]+)\]\]/g;
   let offset=0;
   for(const match of text.matchAll(pattern)) {
-    const start=match.index!;
+    const start=match.index;
     if(escaped(text,start)) continue;
     const pipe=match[1].indexOf('|');
     const target=(pipe<0?match[1]:match[1].slice(0,pipe)).trim();

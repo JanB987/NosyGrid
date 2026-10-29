@@ -50,7 +50,7 @@ export function parsePastedValue(text:string,type:EditorType):CellValue {
     throw new Error('Checkbox values must be true/false, yes/no, or 1/0.');
   }
   if(type==='list'&&text.trim().startsWith('[')&&!text.trim().startsWith('[[')) {
-    const value=parseYaml(text);
+    const value:unknown=parseYaml(text);
     if(!Array.isArray(value))throw new Error('Enter a list, one item per line, or an inline array.');
     return {exists:true,value};
   }

@@ -19,7 +19,7 @@ export function renderGroupMenu(host:HTMLElement,rules:GroupRule[],properties:Ba
     layout.value=rule.layout==='vertical'?'vertical':'horizontal';
     layout.onchange=()=>change(rules.map((rule,i)=>{
       if(i!==index)return rule;
-      const {layout:previous,...rest}=rule;
+      const rest={property:rule.property,direction:rule.direction};
       return layout.value==='vertical'?{...rest,layout:'vertical'}:rest;
     }));
     const up=row.createEl('button',{text:'↑',attr:{'aria-label':`Move group level ${index+1} up`}});up.disabled=index===0;

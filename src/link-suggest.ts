@@ -1,4 +1,5 @@
 import {prepareFuzzySearch, parseLinktext, type App, type TFile} from 'obsidian';
+import {fileProperties} from './validation';
 import {activeWikilink,replaceWikilink} from './link-syntax';
 
 export interface LinkSuggestion { label:string; detail:string; target:string; alias?:string }
@@ -20,8 +21,8 @@ export function findLinkSuggestions(app:App,sourcePath:string,query:string):Link
   const files=app.vault.getFiles?.()??app.vault.getMarkdownFiles();
   const matches:{file:TFile;label:string;alias?:string;score:number}[]=[];
   for(const file of files) {
-    const aliases=app.metadataCache.getFileCache(file)?.frontmatter?.aliases;
-    const names=[{label:file.basename,alias:undefined as string|undefined},...(Array.isArray(aliases)?aliases:typeof aliases==='string'?[aliases]:[])
+    const aliases=fileProperties(app,file).aliases;
+    const names=[{label:file.basename,alias:undefined as string|undefined},...(Array.isArray(aliases)?aliases as unknown[]:typeof aliases==='string'?[aliases]:[])
       .filter((alias:unknown):alias is string=>typeof alias==='string').map((alias:string)=>({label:alias,alias}))];
     let best:typeof matches[number]|undefined;
     for(const name of names) {
@@ -33,7 +34,7 @@ export function findLinkSuggestions(app:App,sourcePath:string,query:string):Link
     if(best) matches.push(best);
   }
   const result:LinkSuggestion[]=matches.sort((a,b)=>b.score-a.score||a.file.path.localeCompare(b.file.path)).slice(0,50).map(({file,label,alias})=>({label,alias,detail:file.path,target:app.metadataCache.fileToLinktext(file,sourcePath,true)}));
-  if(!result.length && query.trim() && !/[\[\]\r\n|]/.test(query)) result.push({label:query.trim(),detail:'New note · created when opened',target:query.trim()});
+  if(!result.length && query.trim() && !/[[\]\r\n|]/.test(query)) result.push({label:query.trim(),detail:'New note · created when opened',target:query.trim()});
   return result;
 }
 
@@ -69,7 +70,7 @@ export class LinkSuggest {
     if(!context) {this.close();return;}
     this.items=findLinkSuggestions(this.app,this.sourcePath,context.query);this.selected=0;
     this.popup?.remove();
-    this.popup=this.input.ownerDocument.createElement('div');
+    this.popup=this.input.ownerDocument.body.createDiv();
     this.popup.className='suggestion-container manual-order-link-suggestions';this.popup.id=this.id;this.popup.setAttribute('role','listbox');
     this.popup.setAttribute('aria-label','Internal link suggestions');
     this.popup.onmousedown=event=>{if(event.button===0)event.preventDefault();};

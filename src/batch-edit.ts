@@ -1,4 +1,5 @@
 import {type App,type TFile} from 'obsidian';
+import {expectRecord} from './validation';
 import {editableProperty,readCells,renameTarget,sameValue,writeCell,type CellSnapshot,type CellValue} from './editing';
 
 export interface CellChange {before:CellSnapshot;after:CellValue}
@@ -34,7 +35,8 @@ export async function applyCellBatch(app:App,input:CellChange[]):Promise<CellEdi
   const completed:{edits:CellEdit[];rollback:()=>Promise<void>}[]=[];
   const writeNote=async(group:CellChange[])=>{
     const {file,path}=group[0].before;
-    await app.fileManager.processFrontMatter(file,fm=>{
+    await app.fileManager.processFrontMatter(file,(raw:unknown)=>{
+      const fm=expectRecord(raw);
       if(file.path!==path||app.vault.getFileByPath(path)!==file)throw new Error(`${path} moved during the paste.`);
       for(const change of group) {
         const key=change.before.property.slice(5);

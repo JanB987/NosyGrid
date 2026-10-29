@@ -1,5 +1,7 @@
 import { getFrontMatterInfo, parseYaml, stringifyYaml, type App, type TFile, type BasesPropertyId } from 'obsidian';
 
+import {expectRecord} from './validation';
+
 export type EditorType = 'text' | 'number' | 'checkbox' | 'date' | 'datetime' | 'list' | 'yaml';
 export interface CellValue { exists: boolean; value: unknown }
 export interface CellSnapshot extends CellValue { file: TFile; path: string; property: BasesPropertyId }
@@ -94,8 +96,7 @@ export async function readCells(app:App,file:TFile,properties:BasesPropertyId[])
   let fm:Record<string,unknown>={};
   if(properties.some(property=>property.startsWith('note.'))) {
     const text=await app.vault.read(file);if(file.path!==path)throw new Error('The file moved while reading properties. Try again.');
-    const info=getFrontMatterInfo(text);fm=info.exists?parseYaml(info.frontmatter)??{}:{};
-    if(typeof fm!=='object'||Array.isArray(fm))throw new Error('Frontmatter must be a property map.');
+    const info=getFrontMatterInfo(text);const parsed:unknown=info.exists?parseYaml(info.frontmatter)??{}:{};fm=expectRecord(parsed);
   }
   return properties.map(property=>property.startsWith('file.')?{file,path,property,exists:true,value:fileValue(file,property)}:
     {file,path,property,exists:Object.hasOwn(fm,property.slice(5)),value:fm[property.slice(5)]});
@@ -112,7 +113,7 @@ export function renameTarget(snapshot: CellSnapshot, value: unknown): string {
     if (!text || /[/\\]/.test(text)) throw new Error('Enter a file name without a folder path.');
     target = (folder ? `${folder}/` : '') + (snapshot.property==='file.basename' ? `${text}.${file.extension}` : text);
   }
-  if (!target || /[\\:*?"<>|\x00-\x1f]/.test(target) || target.split('/').some(part=>!part || part==='.' || part==='..' || /[. ]$/.test(part))) {
+  if (!target || (/[\\:*?"<>|]/.test(target)||Array.from(target).some(char=>char.charCodeAt(0)<32)) || target.split('/').some(part=>!part || part==='.' || part==='..' || /[. ]$/.test(part))) {
     throw new Error('Enter a valid vault-relative path.');
   }
   if (!target.toLowerCase().endsWith(`.${file.extension.toLowerCase()}`)) throw new Error(`Keep the .${file.extension} extension. Use the File name editor to rename the file.`);
@@ -135,7 +136,8 @@ export async function writeCell(app: App, snapshot: CellSnapshot, next: CellValu
     return {file,path:file.path,property,exists:true,value:fileValue(file,property)};
   }
   const key = property.slice(5);
-  await app.fileManager.processFrontMatter(file, fm => {
+  await app.fileManager.processFrontMatter(file, (raw:unknown) => {
+    const fm=expectRecord(raw);
     if(file.path!==path) throw new Error('The file moved while saving. Reopen the cell.');
     if (!sameValue(snapshot,{exists:Object.hasOwn(fm,key),value:fm[key]})) throw new Error('This property changed elsewhere. Your input is kept; copy it or cancel and reopen the cell.');
     if (next.exists) Object.defineProperty(fm,key,{value:next.value,writable:true,enumerable:true,configurable:true});

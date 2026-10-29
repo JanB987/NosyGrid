@@ -10,11 +10,11 @@ export class RowDragPreview {
   start(paths:string[],anchor:HTMLElement,event:DragEvent) {
     this.stop();const selected=new Set(paths);
     this.rows=[...this.root.querySelectorAll<HTMLElement>('tr[data-row-path]')].filter(row=>selected.has(row.dataset.rowPath!));
-    const layer=this.doc.createElement('div');this.layer=layer;
+    const layer=this.doc.body.createDiv();this.layer=layer;
     layer.className='manual-order-row-drag-preview';layer.setAttribute('aria-hidden','true');layer.setAttribute('inert','');
     const width=Math.min(720,anchor.getBoundingClientRect().width||640,Math.max(160,(this.doc.defaultView?.innerWidth??1024)-24));layer.style.width=`${width}px`;
-    if(this.rows.length>1){const count=layer.appendChild(this.doc.createElement('div'));count.className='manual-order-drag-count';count.textContent=`${this.rows.length} rows`;}
-    const table=layer.appendChild(this.doc.createElement('table'));table.className='manual-order-table';const body=table.appendChild(this.doc.createElement('tbody'));
+    if(this.rows.length>1){const count=layer.createDiv();count.className='manual-order-drag-count';count.textContent=`${this.rows.length} rows`;}
+    const table=layer.createEl('table');table.className='manual-order-table';const body=table.createEl('tbody');
     for(const row of this.rows) {
       const copy=row.cloneNode(true) as HTMLElement;copy.classList.remove('is-dragging','manual-order-row-selected');
       for(const element of [copy,...copy.querySelectorAll<HTMLElement>('*')]) {
@@ -27,7 +27,7 @@ export class RowDragPreview {
     }
     this.doc.body.appendChild(layer);
     // Suppress Chromium's additional native ghost; the preview follows document drag events.
-    this.image=this.doc.createElement('canvas');this.image.width=1;this.image.height=1;this.image.className='manual-order-drag-image';this.doc.body.appendChild(this.image);
+    this.image=this.doc.body.createEl('canvas');this.image.width=1;this.image.height=1;this.image.className='manual-order-drag-image';this.doc.body.appendChild(this.image);
     event.dataTransfer?.setDragImage(this.image,0,0);this.move(event);
   }
   private readonly move=(event:DragEvent)=>{

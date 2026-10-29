@@ -1,4 +1,5 @@
 import {parseLinktext,type App} from 'obsidian';
+import {isRecord} from './validation';
 import {splitWikilinks} from './link-syntax';
 import {type CellValue} from './editing';
 
@@ -26,8 +27,8 @@ export function readLinkDrag(data:DataTransfer|null):DraggedLink|undefined {
   if(!hasLinkDrag(data))return;
   try {
     const raw=data!.getData(LINK_DRAG_TYPE);if(raw.length>65536)return;
-    const value=JSON.parse(raw);
-    if(value?.version!==1 || typeof value.sourcePath!=='string' || /[\r\n\0]/.test(value.sourcePath) || typeof value.link!=='string' || !singleLink(value.link))return;
+    const value:unknown=JSON.parse(raw);
+    if(!isRecord(value)||value.version!==1 || typeof value.sourcePath!=='string' || /[\r\n\0]/.test(value.sourcePath) || typeof value.link!=='string' || !singleLink(value.link))return;
     if(value.resolvedPath!==undefined && typeof value.resolvedPath!=='string')return;
     return {version:1,sourcePath:value.sourcePath,link:value.link,resolvedPath:value.resolvedPath};
   } catch {return;}
@@ -59,7 +60,7 @@ export function appendTextLink(value:unknown,link:string):string {
 }
 export function appendLinkValue(value:unknown,type:'text'|'list',link:string):CellValue {
   if(type==='text')return {exists:true,value:appendTextLink(value,link)};
-  const items=Array.isArray(value)?value:value==null?[]:[value];
+  const items:unknown[]=Array.isArray(value)?value:value==null?[]:[value];
   return {exists:true,value:[...items,link]};
 }
 

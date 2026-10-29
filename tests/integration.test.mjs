@@ -651,15 +651,26 @@ test('each list item autocompletes links before Enter confirms that item',async(
   assert.equal(cell(ctx,'Note 1.md','note.related').querySelectorAll('.internal-link').length,1);
 });
 
-test('clicking prose after an aliased link places the item caret at the source position',async()=>{
-  const ctx=setup([1,2,3],['note.related']),value='See [[Note 2|Two]] after';
-  ctx.records.get('Note 1.md').fm.related=[value];ctx.view.onDataUpdated();
-  const host=cell(ctx,'Note 1.md','note.related').querySelector('.manual-order-property-value');
-  const range=ctx.dom.window.document.createRange();range.setStart(host.lastChild,3);range.collapse(true);
-  ctx.dom.window.document.caretRangeFromPoint=()=>range;
-  host.dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,clientX:50,clientY:10}));await settle(ctx);
-  assert.equal(ctx.dom.window.document.activeElement,listInputs(ctx)[0]);
-  assert.equal(listInputs(ctx)[0].selectionStart,value.indexOf(' after')+3);ctx.view.editor.cancel();
+test('standard and legacy caret APIs preserve source offsets after aliased links',async()=>{
+  for(const api of ['standard','legacy']) {
+    const ctx=setup([1,2,3],['note.related']),value='See [[Note 2|Two]] after';
+    ctx.records.get('Note 1.md').fm.related=[value];ctx.view.onDataUpdated();
+    const doc=ctx.dom.window.document,host=cell(ctx,'Note 1.md','note.related').querySelector('.manual-order-property-value');
+    if(api==='standard') {
+      doc.caretPositionFromPoint=()=>({offsetNode:host.lastChild,offset:3});
+      doc.caretRangeFromPoint=()=>{throw new Error('Legacy caret API should not run when the standard API succeeds.');};
+    } else {const range=doc.createRange();range.setStart(host.lastChild,3);range.collapse(true);doc.caretRangeFromPoint=()=>range;}
+    host.dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,clientX:50,clientY:10}));await settle(ctx);
+    assert.equal(doc.activeElement,listInputs(ctx)[0]);assert.equal(listInputs(ctx)[0].selectionStart,value.indexOf(' after')+3);ctx.view.editor.cancel();
+  }
+});
+
+test('list-editor pointer reset timers are scheduled and cleared in their own window',async()=>{
+  const ctx=setup([1,2,3],['note.related']);ctx.records.get('Note 1.md').fm.related=['one','two'];ctx.view.onDataUpdated();await ctx.view.editCell(ctx.entries[0],'note.related');
+  const win=ctx.dom.window,set=win.setTimeout.bind(win),clear=win.clearTimeout.bind(win);let scheduled=0,cleared=0;
+  win.setTimeout=(...args)=>{scheduled++;return set(...args);};win.clearTimeout=id=>{cleared++;clear(id);};
+  const input=listInputs(ctx)[0];for(let i=0;i<2;i++)input.dispatchEvent(new win.MouseEvent('pointerdown',{bubbles:true}));
+  assert.equal(scheduled,2);assert.equal(cleared,1);ctx.view.editor.cancel();assert.equal(cleared,2);
 });
 
 test('list removal refuses a conflicting note edit and retains the draft for recovery',async()=>{

@@ -158,3 +158,6 @@
 .manual-order-summary-total .manual-order-summary-total-label { min-width:38px; width:38px; padding:3px; font-size:var(--font-ui-smaller); }
 .is-board-collapsed > .manual-order-group-header .manual-order-group-summary { writing-mode:horizontal-tb; flex-direction:column; margin:0; max-width:30px; overflow:hidden; }
 .is-board-collapsed .manual-order-group-summary .manual-order-summary-label { display:none; }
+
+.manual-order-aligned-board > .manual-order-board-column { grid-row:1; }
+.manual-order-list-item-input.is-measuring-list-item { height:auto!important; }

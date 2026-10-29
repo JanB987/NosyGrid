@@ -20,6 +20,7 @@ jobs:
         run: |
           BROWSER_PATH=$(node -p "require('playwright-core').chromium.executablePath()")
           echo "OBSIDIAN_TEST_BROWSER=$BROWSER_PATH" >> "$GITHUB_ENV"
+      - run: npm run lint
       - run: npm run typecheck
       - run: npm test
       - run: npm run build

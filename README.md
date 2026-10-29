@@ -38,6 +38,7 @@ With Node.js 24 or newer:
 
 ```sh
 npm ci
+npm run lint
 npm run typecheck
 npm test
 npm run build
@@ -116,10 +117,11 @@ Formula and computed file properties are read-only. A layout rebuild is still ne
 - `npm run build` produces the three distributable files in `dist/`.
 - `npm run screenshots` regenerates the fictional demo screenshots with Chromium/Edge.
 - `npm run check:release` checks version metadata, the release files and README images.
+- `npm run lint` enforces the Obsidian checker rules and strict unsafe-value checks with zero warnings.
 - The test suite covers editing, selection, clipboard, links, row/group moves, cancellation, persistence, colors, summaries and browser layouts.
 - A tag matching `manifest.json` (for example, `0.26.1`, without `v`) triggers the release workflow.
 
-See [detailed usage notes](docs/usage.md), [release notes](docs/releases/0.26.1.md) and [Obsidian's plugin submission guide](https://docs.obsidian.md/Plugins/Releasing/Submit%20your%20plugin).
+See [detailed usage notes](docs/usage.md), [release notes](docs/releases/0.26.2.md) and [Obsidian's plugin submission guide](https://docs.obsidian.md/Plugins/Releasing/Submit%20your%20plugin).
 
 ## Feedback and license
 

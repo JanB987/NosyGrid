@@ -1,6 +1,6 @@
 {
   "name": "nosygrid",
-  "version": "0.26.1",
+  "version": "0.26.2",
   "description": "Edit Bases tables, reorder rows, and organize notes with nested groups, board columns, colors, and summaries.",
   "main": "index.js",
   "scripts": {
@@ -8,19 +8,25 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.mjs",
     "screenshots": "node scripts/screenshots.mjs",
-    "check:release": "node scripts/check-release.mjs"
+    "check:release": "node scripts/check-release.mjs",
+    "lint": "eslint src --max-warnings 0"
   },
   "keywords": [],
   "author": "JanB987",
   "license": "MIT",
   "type": "commonjs",
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@eslint/json": "^0.14.0",
     "@types/node": "^26.6.5",
     "esbuild": "^0.28.2",
+    "eslint": "^9.39.5",
+    "eslint-plugin-obsidianmd": "^0.4.2",
     "jsdom": "^29.1.1",
     "obsidian": "^1.14.4",
     "playwright-core": "^1.64.1",
-    "typescript": "^7.0.2",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.1",
     "yaml": "^2.9.1"
   },
   "private": true,
@@ -34,5 +40,10 @@
   "homepage": "https://github.com/JanB987/NosyGrid#readme",
   "engines": {
     "node": ">=24"
+  },
+  "overrides": {
+    "eslint-plugin-obsidianmd": {
+      "obsidian": "$obsidian"
+    }
   }
 }

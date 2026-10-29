@@ -76,7 +76,7 @@ export class CellSelection {
   }
 
   renamePath(oldPath:string,newPath:string) {
-    const rename=(key:string)=>{const [path,property]=JSON.parse(key);return JSON.stringify([path===oldPath?newPath:path,property]);};
+    const rename=(key:string)=>{const value:unknown=JSON.parse(key);if(!Array.isArray(value))throw new Error('Invalid cell selection key.');const parts:unknown[]=value;const [path,property]=parts;return JSON.stringify([path===oldPath?newPath:path,property]);};
     this.selected=new Set([...this.selected].map(rename));if(this.anchor)this.anchor=rename(this.anchor);if(this.end)this.end=rename(this.end);
     for(const point of [...this.points.values()])if(point.cell.dataset.path===oldPath) {
       this.points.delete(point.key);point.cell.dataset.path=newPath;point.key=rename(point.key);this.points.set(point.key,point);
