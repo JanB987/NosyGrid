@@ -190,9 +190,9 @@ test('real browser: vertical lists, fixed rows, expansion persistence and editin
     });
     await page.getByRole('button',{name:'Groups',exact:true}).click();
     await page.getByLabel('New grouping property',{exact:true}).selectOption('note.team');
-    await page.getByRole('button',{name:'Add group',exact:true}).click();
+    await page.getByRole('button',{name:'Add group by',exact:true}).click();
     await page.getByLabel('New grouping property',{exact:true}).selectOption('note.stage');
-    await page.getByRole('button',{name:'Add group',exact:true}).click();
+    await page.getByRole('button',{name:'Add group by',exact:true}).click();
     assert.equal(await page.locator('.manual-order-group-header').count(),5);
     const outer=page.locator('.manual-order-group-header').first();
     await outer.click();assert.equal(await outer.getAttribute('aria-expanded'),'false');assert.equal(await page.locator('tbody tr').count(),1);
@@ -243,11 +243,11 @@ test('real browser: vertical lists, fixed rows, expansion persistence and editin
     await page.evaluate(()=>{options.manualGroups=[{property:'note.team',direction:'asc'}];delete options.manualCollapsedGroups;openView();});
     await page.getByRole('button',{name:'Move Note 1',exact:true}).dragTo(page.locator('td[data-path="Note 3.md"][data-property="note.text"]'),{targetPosition:{x:10,y:40}});
     await page.waitForFunction(()=>!testView.movingRows&&records[0].fm.team==='Project B');
-    assert.equal(await page.evaluate(()=>records[0].fm.priority),2,'positioned cross-group drop sets the requested order');
+    assert.equal(await page.evaluate(()=>records[0].fm.priority),4,'positioned cross-group drop sets the requested order');
     await page.locator('#view').screenshot({path:'test-build/move-rows-between-groups.png'});
     await page.evaluate(()=>{
       options.manualGroups=[{property:'note.team',direction:'asc'},{property:'note.stage',direction:'asc'}];
-      delete options.manualKnownGroups;delete options.manualCollapsedGroups;
+      delete options.manualKnownGroups;delete options.manualGroupValues;delete options.manualCollapsedGroups;
       records.slice(0,3).forEach((record,i)=>{record.fm.team=i===0?'Project A':'Project B';record.fm.stage='Ready';record.fm.priority=i+1;});
       records.push({file:{path:'Outside.md',name:'Outside.md',basename:'Outside',extension:'md'},fm:{team:'Project A',stage:'Ready'}});
       openView();
@@ -363,7 +363,7 @@ test('real browser: vertical lists, fixed rows, expansion persistence and editin
       await page.evaluate(()=>{const root=document.querySelector('.manual-order-bases');root.scrollLeft+=10;});assert.equal((await snapshot()).left,beforeSelect.left+10,'normal scrolling resumes after a move');
     }
     await page.evaluate(()=>{
-      document.getElementById('view').style.height='800px';options.manualGroups=[{property:'note.team',direction:'asc'},{property:'note.stage',direction:'asc',layout:'vertical'}];delete options.manualGroupWidths;delete options.manualCollapsedGroups;delete options.manualRowHeights;
+      delete options.manualKnownGroups;delete options.manualGroupValues;document.getElementById('view').style.height='800px';options.manualGroups=[{property:'note.team',direction:'asc'},{property:'note.stage',direction:'asc',layout:'vertical'}];delete options.manualGroupWidths;delete options.manualCollapsedGroups;delete options.manualRowHeights;
       records[0].fm.team='A';records[0].fm.stage='Ready';records[1].fm.team='A';records[1].fm.stage='Waiting';records[2].fm.team='B';records[2].fm.stage='Ready';
       const extra=records.find(record=>record.file.path==='Board A.md');extra.fm.team='B';extra.fm.stage='Waiting';openView();
     });
@@ -386,7 +386,7 @@ test('real browser: vertical lists, fixed rows, expansion persistence and editin
     await linkedHandle.dblclick();for(const column of await readyColumns.all())assert.equal(Math.round((await column.boundingBox()).width),640,'reset applies to every matching group');assert.equal(await page.evaluate(()=>writes),notesBeforeWidthChange);
     await page.evaluate(()=>{
       records[0].fm.stage='Ready';records[1].fm.stage='Waiting';records[2].fm.stage='Waiting';records.find(record=>record.file.path==='Board A.md').fm.stage='Backlog';
-      delete options.manualKnownGroups;delete options.manualGroupWidths;delete options.manualCollapsedGroups;openView();
+      delete options.manualKnownGroups;delete options.manualGroupValues;delete options.manualGroupWidths;delete options.manualCollapsedGroups;openView();
       options.manualGroupWidths=Object.fromEntries([...document.querySelectorAll('.manual-order-board-column')].map(column=>[column.dataset.groupWidthKey,320]));testView.onDataUpdated();
     });
     const alignments=()=>page.locator('.manual-order-aligned-board').evaluateAll(boards=>boards.map(board=>[...board.querySelectorAll(':scope > .manual-order-board-column')].map(column=>({value:column.querySelector('.manual-order-group-label').textContent,x:column.getBoundingClientRect().x,slot:column.style.gridColumn}))));
@@ -458,7 +458,7 @@ test('real browser: vertical lists, fixed rows, expansion persistence and editin
     for(const column of await waitingColumns.all())assert.equal(await column.evaluate(el=>el.classList.contains('is-colored-group')),false);
     await page.evaluate(()=>{
       document.querySelector('.menu.bases-toolbar-group-menu')?.remove();
-      options.manualGroups=[];delete options.manualKnownGroups;delete options.manualCollapsedGroups;testView.onDataUpdated();
+      options.manualGroups=[];delete options.manualKnownGroups;delete options.manualGroupValues;delete options.manualCollapsedGroups;testView.onDataUpdated();
       window.stableTable=document.querySelector('table');window.stableRow=document.querySelector('tr[data-row-path="Note 2.md"]');window.stableOther=document.querySelector('td[data-path="Note 2.md"][data-property="note.items"]');
       window.tableRemovals=0;window.tableObserver=new MutationObserver(records=>{for(const record of records)for(const node of record.removedNodes)if(node===stableTable||node.contains?.(stableTable))tableRemovals++;});tableObserver.observe(document.querySelector('.manual-order-bases'),{childList:true,subtree:true});
     });

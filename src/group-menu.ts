@@ -31,6 +31,6 @@ export function renderGroupMenu(host:HTMLElement,rules:GroupRule[],properties:Ba
   const row=host.createDiv({cls:'manual-order-group-rule'});
   const property=row.createEl('select',{attr:{'aria-label':'New grouping property'}});
   for(const id of available)property.createEl('option',{text:label(id),attr:{value:id}});
-  const add=row.createEl('button',{text:native?'Add group by':'Add group'});add.disabled=!available.length;
+  const add=row.createEl('button',{text:'Add group by'});add.disabled=!available.length;
   add.onclick=()=>{if(property.value)change([...rules,{property:property.value as BasesPropertyId,direction:'asc'}]);};
 }

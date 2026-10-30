@@ -1,7 +1,7 @@
 import {setIcon} from 'obsidian';
 import type {ValueSection,ValueSettings} from './group-values';
 
-export function renderValueMenu(host:HTMLElement,section:ValueSection,settings:ValueSettings,label:string,render:(host:HTMLElement,item:ValueSection['items'][number])=>void,save:(next:ValueSettings,reorder?:boolean)=>void,parse:(text:string)=>unknown,report:(error:unknown)=>void,colors?:{get:(id:string)=>string|undefined;set:(id:string,color:string|null)=>void}) {
+export function renderValueMenu(host:HTMLElement,section:ValueSection,settings:ValueSettings,label:string,render:(host:HTMLElement,item:ValueSection['items'][number])=>void,save:(next:ValueSettings,reorder?:boolean)=>void,parse:(text:string)=>unknown,report:(error:unknown)=>void,colors?:{get:(id:string)=>string|undefined;set:(id:string,color:string|null)=>void},identity?:(value:unknown)=>string) {
   const details=host.createEl('details',{cls:'manual-order-group-values'});
   details.createEl('summary',{text:`${label} — group values`});
   let dragged:string|undefined;
@@ -28,15 +28,20 @@ export function renderValueMenu(host:HTMLElement,section:ValueSection,settings:V
       picker.onchange=()=>colors.set(item.id,picker.value);
       const clear=row.createEl('button',{cls:'manual-order-clear-group-color',attr:{'aria-label':`Clear color for group ${item.label}`,title:'Clear group color'}});setIcon(clear,'rotate-ccw');clear.disabled=!current;clear.onclick=()=>colors.set(item.id,null);
     }
+    const remove=row.createEl('button',{cls:'manual-order-remove-group-value',attr:{'aria-label':`Remove group ${item.label}`,title:'Remove this value from the Base view; notes are unchanged'}});setIcon(remove,'trash-2');
+    remove.onclick=()=>save({...settings,added:settings.added.filter(value=>identity?.(value)!==item.id),known:(settings.known??[]).filter(value=>identity?.(value)!==item.id),hidden:settings.hidden.filter(id=>id!==item.id),order:settings.order.filter(id=>id!==item.id),removed:[...new Set([...(settings.removed??[]),item.id])]});
   });
-  if(section.vertical===false)return;
+  if(section.vertical!==false) {
   const controls=details.createDiv({cls:'manual-order-group-value-actions'});
   const show=controls.createEl('button',{text:'Show all'});show.onclick=()=>save({...settings,hidden:[]});
   const hide=controls.createEl('button',{text:'Hide all'});hide.onclick=()=>save({...settings,hidden:section.items.map(item=>item.id)});
+  }
   if(section.property.startsWith('note.')) {
     const form=details.createEl('form',{cls:'manual-order-add-group-value'});
     const input=form.createEl('input',{attr:{type:'text',placeholder:'New group value','aria-label':`New ${label} group value`}});
     form.createEl('button',{text:'Add group',attr:{type:'submit'}});
-    form.onsubmit=event=>{event.preventDefault();event.stopPropagation();if(!input.value.trim())return;try{save({...settings,added:[...settings.added,parse(input.value)]});}catch(error){report(error);}};
+    const empty=details.createEl('button',{text:'Add empty group',attr:{type:'button','aria-label':`Add empty ${label} group`}});
+    empty.onclick=()=>{const id=identity?.(null);save({...settings,added:[...settings.added.filter(value=>identity?.(value)!==id),null],hidden:settings.hidden.filter(hidden=>hidden!==id),removed:(settings.removed??[]).filter(removed=>removed!==id)});};
+    form.onsubmit=event=>{event.preventDefault();event.stopPropagation();if(!input.value.trim())return;try{const value=parse(input.value),id=identity?.(value);save({...settings,added:[...settings.added.filter(existing=>identity?.(existing)!==id),value],hidden:settings.hidden.filter(hidden=>hidden!==id),removed:(settings.removed??[]).filter(removed=>removed!==id)});}catch(error){report(error);}};
   }
 }

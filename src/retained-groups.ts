@@ -9,14 +9,14 @@ export interface DisplayGroup<T> extends RowGroup<T> {
 interface RememberedGroup {key:string;parent?:string;label:string;property?:RowGroup<unknown>['property'];bindings:GroupBinding[];nativeId?:string}
 interface GroupMemory {signature:string;groups:RememberedGroup[]}
 
-/** Keep only previously seen groups, with live vault evidence for each empty full path. */
+/** Remember previously seen group paths even after their last note changes or disappears. */
 export function retainGroups<T>(live:DisplayGroup<T>[],saved:unknown,signature:string,find:(bindings:GroupBinding[])=>GroupBinding[]|undefined) {
   const memory=saved as GroupMemory|undefined;
   const previous=memory?.signature===signature&&Array.isArray(memory.groups)?memory.groups.filter(record=>record&&typeof record.key==='string'&&typeof record.label==='string'&&(record.parent===undefined||typeof record.parent==='string')&&record.parent!==record.key):[];
   const nodes=new Map<string,DisplayGroup<T>>(),records=new Map<string,RememberedGroup>();
   const visit=(group:DisplayGroup<T>,parent?:string)=>{
     nodes.set(group.key,group);
-    if(!group.unknownNative&&group.bindings.length&&group.bindings.every(binding=>!binding.property.startsWith('formula.'))) {
+    if(!group.unknownNative&&group.bindings.length) {
       records.set(group.key,{key:group.key,parent,label:group.label,property:group.property,nativeId:group.nativeId,bindings:group.bindings.map(({property,value,sourcePath})=>({property,value,sourcePath}))});
     }
     for(const child of group.children)visit(child,group.key);
@@ -25,8 +25,8 @@ export function retainGroups<T>(live:DisplayGroup<T>[],saved:unknown,signature:s
   const liveKeys=new Set(nodes.keys());
   for(const record of previous) {
     if(!record||typeof record.key!=='string'||typeof record.label!=='string'||nodes.has(record.key)||!Array.isArray(record.bindings)||!record.bindings.length)continue;
-    if(!record.bindings.every(binding=>binding&&typeof binding.property==='string'&&/^(note|file)\..+/.test(binding.property)&&typeof binding.sourcePath==='string'&&typeof binding.value?.exists==='boolean'))continue;
-    const bindings=find(record.bindings);if(!bindings)continue;
+    if(!record.bindings.every(binding=>binding&&typeof binding.property==='string'&&/^(note|file|formula)\..+/.test(binding.property)&&typeof binding.sourcePath==='string'&&typeof binding.value?.exists==='boolean'))continue;
+    const bindings=find(record.bindings)??record.bindings;
     nodes.set(record.key,{key:record.key,label:record.label,property:record.property,rows:[],children:[],bindings,nativeId:record.nativeId});
     records.set(record.key,{...record,bindings:bindings.map(({property,value,sourcePath})=>({property,value,sourcePath}))});
   }

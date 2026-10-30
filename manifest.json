@@ -1,7 +1,7 @@
 {
   "id": "nosygrid",
   "name": "NosyGrid",
-  "version": "0.26.3",
+  "version": "0.29.0",
   "minAppVersion": "1.10.2",
   "description": "Edit Bases tables, reorder rows, and organize notes with nested groups, board columns, colors, and summaries.",
   "author": "JanB987",

@@ -11,10 +11,10 @@ test('empty known siblings keep their position and never import vault rows',()=>
   const retained=retainGroups([node('B')],saved,'schema',bindings=>bindings);
   assert.deepEqual(retained.groups.map(group=>group.key),['A','B','C']);assert.deepEqual(retained.groups.map(group=>group.rows.length),[0,1,0]);
 });
-test('schema changes and missing vault evidence remove retained groups',()=>{
+test('schema changes reset paths while missing vault evidence preserves retained groups',()=>{
   const saved=retainGroups([node('A')],null,'schema',()=>undefined).memory;
   assert.equal(retainGroups([],saved,'other',bindings=>bindings).groups.length,0);
-  assert.equal(retainGroups([],saved,'schema',()=>undefined).groups.length,0);
+  assert.equal(retainGroups([],saved,'schema',()=>undefined).groups.length,1);
 });
 test('retention reconstructs nested empty ancestors and ignores invalid memory records',()=>{
   const saved=retainGroups([node('A',[node('child')])],null,'schema',()=>undefined).memory;
@@ -23,8 +23,8 @@ test('retention reconstructs nested empty ancestors and ignores invalid memory r
   assert.equal(retained.groups[0].children[0].key,'child');assert.equal(retained.groups[0].rows.length,0);
   assert.equal(retained.memory.groups.length,2);
 });
-test('computed and unknown native paths are not retained without verifiable vault properties',()=>{
+test('computed values are retained while unidentified native paths remain unsupported',()=>{
   const computed={...node('formula'),bindings:[{...binding('x'),property:'formula.value'}]};
   const unknown={...node('unknown'),unknownNative:true};
-  assert.equal(retainGroups([computed,unknown],null,'schema',bindings=>bindings).memory,null);
+  assert.equal(retainGroups([computed,unknown],null,'schema',bindings=>bindings).memory.groups.length,1);
 });

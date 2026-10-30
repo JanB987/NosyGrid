@@ -236,11 +236,11 @@ test('table drop persists the user example, renders it, and undo restores it',as
   handles[1].ondragstart({dataTransfer:{setData(){},setDragImage(){}}});
   ctx.dom.window.document.querySelector('tbody tr').ondrop({preventDefault(){},clientY:-1});
   for(let i=0;i<20&&ctx.plugin.busy;i++)await new Promise(resolve=>setTimeout(resolve,0));
-  assert.equal(ctx.records.get('Note 2.md').fm.priority,1);
-  assert.equal(ctx.records.get('Note 1.md').fm.priority,2);
+  assert.equal(ctx.records.get('Note 2.md').fm.priority,0);
+  assert.equal(ctx.records.get('Note 1.md').fm.priority,1);
   assert.equal(ctx.records.get('Note 3.md').fm.priority,3);
-  assert.deepEqual(displayed(ctx),[['Note 2','1'],['Note 1','2'],['Note 3','3']]);
-  assert.equal(ctx.writes,2);
+  assert.deepEqual(displayed(ctx),[['Note 2','0'],['Note 1','1'],['Note 3','3']]);
+  assert.equal(ctx.writes,1);
   for(const r of ctx.records.values())assert.equal(r.fm.keep,'unchanged');
   await ctx.plugin.undo();
   assert.deepEqual(displayed(ctx),[['Note 1','1'],['Note 2','2'],['Note 3','3']]);
@@ -248,10 +248,10 @@ test('table drop persists the user example, renders it, and undo restores it',as
 test('external rank conflicts block undo without overwriting',async()=>{
   const ctx=setup();
   await ctx.view.move('Note 2.md','Note 1.md',false,0);
-  ctx.records.get('Note 1.md').fm.priority=99;
+  ctx.records.get('Note 2.md').fm.priority=99;
   const writes=ctx.writes;
   await ctx.plugin.undo();
-  assert.equal(ctx.records.get('Note 1.md').fm.priority,99);
+  assert.equal(ctx.records.get('Note 2.md').fm.priority,99);
   assert.equal(ctx.writes,writes);
   assert.match(globalThis.notices.at(-1),/changed/);
 });
@@ -259,7 +259,7 @@ test('empty original values are restored exactly by undo',async()=>{
   for(const empty of [undefined,null,'']) {
     const ctx=setup([1,empty,3]);
     await ctx.view.move('Note 2.md','Note 1.md',false,0);
-    assert.equal(ctx.records.get('Note 2.md').fm.priority,1);
+    assert.equal(ctx.records.get('Note 2.md').fm.priority,0);
     await ctx.plugin.undo();
     assert.equal(ctx.records.get('Note 2.md').fm.priority,empty);
     assert.equal(Object.hasOwn(ctx.records.get('Note 2.md').fm,'priority'),empty!==undefined);
@@ -372,7 +372,7 @@ test('rename uses file manager, preserves reorder undo, and can be undone',async
   cell(ctx,'Note 2.md','file.name').querySelector('.manual-order-rename').click();await settle(ctx);
   editorInput(ctx).value='Renamed.md';await ctx.view.editor.save();
   assert.equal(ctx.records.has('Note 2.md'),false);
-  assert.equal(ctx.records.get('Renamed.md').fm.priority,1);
+  assert.equal(ctx.records.get('Renamed.md').fm.priority,0);
   await ctx.plugin.undo();assert.equal(ctx.records.get('Renamed.md').fm.priority,2);
   await ctx.plugin.undoEdit();assert.ok(ctx.records.has('Note 2.md'));
 });
@@ -976,8 +976,8 @@ test('Groups menu adds, orders, changes and removes nested grouping levels',asyn
   const button=(text)=>[...ctx.dom.window.document.querySelectorAll('button')].find(button=>button.textContent===text);
   button('Groups').click();await settle(ctx);
   const choose=(selector,value)=>{const select=ctx.dom.window.document.querySelector(selector);select.value=value;select.dispatchEvent(new ctx.dom.window.Event('change',{bubbles:true}));};
-  choose('[aria-label="New grouping property"]','note.keep');button('Add group').click();await settle(ctx);
-  choose('[aria-label="New grouping property"]','note.priority');button('Add group').click();await settle(ctx);
+  choose('[aria-label="New grouping property"]','note.keep');button('Add group by').click();await settle(ctx);
+  choose('[aria-label="New grouping property"]','note.priority');button('Add group by').click();await settle(ctx);
   assert.deepEqual(ctx.options.manualGroups.map(rule=>rule.property),['note.keep','note.priority']);
   ctx.dom.window.document.querySelector('[aria-label="Move group level 2 up"]').click();await settle(ctx);
   assert.equal(ctx.options.manualGroups[0].property,'note.priority');
@@ -997,7 +997,7 @@ test('native Bases groups stay outermost with collapsible nested groups includin
 test('row reorder is scoped to the innermost group and grouping edits move notes between groups',async()=>{
   const ctx=setup([1,2,3],['file.name','note.keep','note.priority']);ctx.records.get('Note 3.md').fm.keep='Other';ctx.options.manualGroups=[{property:'note.keep',direction:'asc'}];ctx.view.onDataUpdated();
   const leaf=ctx.view.groups.findIndex(rows=>rows.length===2);await ctx.view.move('Note 2.md','Note 1.md',false,leaf);
-  assert.equal(ctx.records.get('Note 2.md').fm.priority,1);assert.equal(ctx.records.get('Note 1.md').fm.priority,2);assert.equal(ctx.records.get('Note 3.md').fm.priority,3);
+  assert.equal(ctx.records.get('Note 2.md').fm.priority,0);assert.equal(ctx.records.get('Note 1.md').fm.priority,1);assert.equal(ctx.records.get('Note 3.md').fm.priority,3);
   cell(ctx,'Note 1.md','note.keep').click();await settle(ctx);const input=editorInput(ctx);input.value='Other';await ctx.view.editor.save();await settle(ctx);
   assert.equal(ctx.view.groups.find(rows=>rows.some(row=>row.path==='Note 3.md')).length,2);
 });
@@ -1156,14 +1156,14 @@ test('handle ranges and modifier grip selection move several rows to a collapsed
   await ctx.plugin.undoEdit();assert.equal(ctx.records.get('Note 1.md').fm.team,'A');assert.equal(ctx.records.get('Note 2.md').fm.team,'A');
 });
 
-test('dropping selected rows between groups inserts the block and renumbers the destination in one undo',async()=>{
+test('dropping selected rows between groups inserts the block with sparse ranks in one undo',async()=>{
   const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc'}];ctx.view.onDataUpdated();
   rowGrip(ctx,'Note 1.md').dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,ctrlKey:true}));
   rowGrip(ctx,'Note 2.md').dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,ctrlKey:true}));
   assert.equal(ctx.view.selectedRows.size,2);
   await dropRows(ctx,'Note 1.md',cell(ctx,'Note 4.md','file.name').closest('tr'));
   const rows=ctx.view.groups.find(rows=>rows.some(row=>row.path==='Note 3.md'));assert.deepEqual(rows.map(row=>row.path),['Note 3.md','Note 1.md','Note 2.md','Note 4.md']);
-  assert.deepEqual(rows.map(row=>row.rank),[1,2,3,4]);assert.equal(ctx.plugin.editHistory.length,1);
+  assert.deepEqual(rows.map(row=>row.rank),[3,3.33,3.66,4]);assert.equal(ctx.plugin.editHistory.length,1);
   await ctx.plugin.undoEdit();assert.deepEqual([...ctx.records.values()].map(record=>record.fm.priority),[1,2,3,4]);assert.equal(ctx.records.get('Note 1.md').fm.team,'A');
 });
 
@@ -1218,6 +1218,7 @@ test('moves to boolean false and numeric zero retain their primitive types',asyn
 test('multi-row reorder inside a linked group preserves each notes alias instead of overwriting it',async()=>{
   const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc'}];
   for(let i=1;i<=4;i++)ctx.records.get(`Note ${i}.md`).fm.team=`[[Note 4|Alias ${i}]]`;ctx.view.onDataUpdated();assert.equal(ctx.view.groups.length,1);
+  await ctx.view.moveRowsToGroup(['Note 3.md'],ctx.view.groupTargets.find(target=>target.rows.some(row=>row.path==='Note 3.md')),{path:'Note 4.md',below:false});assert.equal(ctx.writes,0);
   rowGrip(ctx,'Note 1.md').dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,ctrlKey:true}));rowGrip(ctx,'Note 2.md').dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,ctrlKey:true}));
   await dropRows(ctx,'Note 1.md',cell(ctx,'Note 4.md','file.name').closest('tr'));
   for(let i=1;i<=4;i++)assert.equal(ctx.records.get(`Note ${i}.md`).fm.team,`[[Note 4|Alias ${i}]]`);
@@ -1248,7 +1249,7 @@ test('bulk handle selection survives refresh and selected handles expose pressed
 test('positioned group moves respect descending order and undo restores every rank',async()=>{
   const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc'}];ctx.options.orderDirection='desc';ctx.view.onDataUpdated();
   await dropRows(ctx,'Note 1.md',cell(ctx,'Note 3.md','file.name').closest('tr'));
-  const rows=ctx.view.groups.find(rows=>rows.some(row=>row.path==='Note 4.md'));assert.deepEqual(rows.map(row=>row.path),['Note 4.md','Note 1.md','Note 3.md']);assert.deepEqual(rows.map(row=>row.rank),[3,2,1]);
+  const rows=ctx.view.groups.find(rows=>rows.some(row=>row.path==='Note 4.md'));assert.deepEqual(rows.map(row=>row.path),['Note 4.md','Note 1.md','Note 3.md']);assert.deepEqual(rows.map(row=>row.rank),[4,3.5,3]);
   await ctx.plugin.undoEdit();assert.deepEqual([...ctx.records.values()].map(record=>record.fm.priority),[1,2,3,4]);
 });
 
@@ -1282,17 +1283,17 @@ test('retained empty groups survive reopen and keep their collapsed state',async
   const writes=ctx.writes;ctx.view.onDataUpdated();assert.equal(ctx.writes,writes);assert.ok(ctx.options.manualKnownGroups);
 });
 
-test('empty groups disappear when the last vault occurrence changes and unrelated outside values are not added',async()=>{
+test('empty groups persist after the last vault occurrence changes and unrelated outside values are not added',async()=>{
   const ctx=groupedMoveFixture();ctx.records.get('Note 4.md').fm.team='A';ctx.records.get('Note 4.md').fm.stage='Ready';filterToFirst(ctx,3);
   rowGrip(ctx,'Note 1.md').dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,ctrlKey:true}));rowGrip(ctx,'Note 2.md').dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,ctrlKey:true}));await dropRows(ctx,'Note 1.md',groupHeader(ctx,'note.team: B'));assert.ok(groupHeader(ctx,'note.team: A'));
-  ctx.records.get('Note 4.md').fm.team='Unrelated';ctx.view.refreshGroupAvailability();assert.equal(groupHeader(ctx,'note.team: A'),undefined);assert.equal(groupHeader(ctx,'note.team: Unrelated'),undefined);
-  assert.equal(ctx.options.manualKnownGroups.groups.some(group=>group.label==='A'),false);
+  ctx.records.get('Note 4.md').fm.team='Unrelated';ctx.view.refreshGroupAvailability();assert.ok(groupHeader(ctx,'note.team: A'));assert.equal(groupHeader(ctx,'note.team: Unrelated'),undefined);
+  assert.equal(ctx.options.manualKnownGroups.groups.some(group=>group.label==='A'),true);
 });
 
-test('nested retention requires one vault note with the complete parent-child combination',async()=>{
+test('nested retention preserves previously seen parent-child combinations without vault evidence',async()=>{
   const ctx=groupedMoveFixture();ctx.records.get('Note 4.md').fm.team='A';ctx.records.get('Note 4.md').fm.stage='Waiting';filterToFirst(ctx,3);
   rowGrip(ctx,'Note 1.md').dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,ctrlKey:true}));rowGrip(ctx,'Note 2.md').dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,ctrlKey:true}));await dropRows(ctx,'Note 1.md',groupHeader(ctx,'note.team: B'));
-  const parent=groupHeader(ctx,'note.team: A');assert.ok(parent);assert.equal(parent.parentElement.querySelectorAll('.manual-order-group-body .manual-order-group-header').length,0);
+  const parent=groupHeader(ctx,'note.team: A');assert.ok(parent);assert.equal(parent.parentElement.querySelectorAll('.manual-order-group-body .manual-order-group-header').length,1);
   assert.match(parent.parentElement.textContent,/No matching files/);assert.equal(ctx.records.get('Note 4.md').fm.stage,'Waiting');
 });
 
@@ -1325,10 +1326,10 @@ test('retained linked group headers keep aliases and links and never write the o
   await dropRows(ctx,'Note 2.md',header);assert.equal(ctx.records.get('Note 2.md').fm.team,'[[Note 3|Outside alias]]');assert.equal(ctx.records.get('Note 4.md').fm.team,'[[Note 3|Outside alias]]');
 });
 
-test('removing the last outside supporting note removes the empty header without changing visible notes',async()=>{
+test('removing the last outside supporting note keeps the empty header without changing visible notes',async()=>{
   const ctx=groupedMoveFixture();ctx.records.get('Note 4.md').fm.team='A';filterToFirst(ctx,3);ctx.options.manualGroups=[{property:'note.team',direction:'asc'}];ctx.view.onDataUpdated();
   rowGrip(ctx,'Note 1.md').dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,ctrlKey:true}));rowGrip(ctx,'Note 2.md').dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,ctrlKey:true}));await dropRows(ctx,'Note 1.md',groupHeader(ctx,'note.team: B'));assert.ok(groupHeader(ctx,'note.team: A'));
-  ctx.records.delete('Note 4.md');const writes=ctx.writes;ctx.view.refreshGroupAvailability();assert.equal(groupHeader(ctx,'note.team: A'),undefined);assert.equal(ctx.writes,writes);
+  ctx.records.delete('Note 4.md');const writes=ctx.writes;ctx.view.refreshGroupAvailability();assert.ok(groupHeader(ctx,'note.team: A'));assert.equal(ctx.writes,writes);
 });
 
 test('vertical grouping creates side-by-side column containers with the chosen table properties',()=>{
@@ -1475,7 +1476,7 @@ test('vertical groups reserve the same sorted column slots under sparse horizont
 
 test('aligned positions respect descending group order without persisting artificial combinations',()=>{
   const ctx=groupedMoveFixture();ctx.records.get('Note 1.md').fm.stage='Ready';ctx.records.get('Note 2.md').fm.stage='Ready';ctx.records.get('Note 3.md').fm.stage='Backlog';ctx.records.get('Note 4.md').fm.stage='Waiting';ctx.options.manualGroups=[{property:'note.team',direction:'asc'},{property:'note.stage',direction:'desc',layout:'vertical'}];ctx.view.onDataUpdated();
-  assert.equal(groupHeader(ctx,'note.stage: Waiting').parentElement.style.gridColumn,'1');assert.equal(groupHeader(ctx,'note.stage: Ready').parentElement.style.gridColumn,'2');assert.equal(groupHeader(ctx,'note.stage: Backlog').parentElement.style.gridColumn,'3');assert.equal(ctx.options.manualKnownGroups.groups.filter(group=>group.property==='note.stage').length,3);assert.equal(ctx.writes,0);
+  assert.equal(groupHeader(ctx,'note.stage: Waiting').parentElement.style.gridColumn,'1');assert.equal(groupHeader(ctx,'note.stage: Ready').parentElement.style.gridColumn,'2');assert.equal(groupHeader(ctx,'note.stage: Backlog').parentElement.style.gridColumn,'3');assert.equal(ctx.options.manualKnownGroups.groups.filter(group=>group.property==='note.stage').length,4);assert.equal(ctx.writes,0);
 });
 
 test('collapsed matches retain alignment tracks and shared resizing updates those tracks live',async()=>{
@@ -1564,7 +1565,7 @@ test('cancelled or refreshed group drags do not persist an order',()=>{
 
 test('manual group positions retain temporarily absent values when another value is repositioned',async()=>{
   const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc',layout:'vertical'}];ctx.view.onDataUpdated();await dropGroup(ctx,groupHeader(ctx,'note.team: B'),groupHeader(ctx,'note.team: A'));assert.deepEqual(stageColumns(ctx),[['note.team: B','note.team: A']]);
-  ctx.records.get('Note 3.md').fm.team='C';ctx.records.get('Note 4.md').fm.team='C';ctx.view.onDataUpdated();await dropGroup(ctx,groupHeader(ctx,'note.team: C'),groupHeader(ctx,'note.team: A'));assert.deepEqual(stageColumns(ctx),[['note.team: C','note.team: A']]);
+  ctx.records.get('Note 3.md').fm.team='C';ctx.records.get('Note 4.md').fm.team='C';ctx.view.onDataUpdated();await dropGroup(ctx,groupHeader(ctx,'note.team: C'),groupHeader(ctx,'note.team: A'));assert.deepEqual(stageColumns(ctx),[['note.team: B','note.team: C','note.team: A']]);
   ctx.records.get('Note 3.md').fm.team='B';ctx.view.onDataUpdated();assert.deepEqual(stageColumns(ctx),[['note.team: B','note.team: C','note.team: A']]);assert.equal(ctx.writes,0);
 });
 
@@ -1579,4 +1580,147 @@ test('reserved native summary settings load, persist and reopen independently of
   doc.querySelector('button[aria-label="Summarize note.priority"]').click();[...doc.querySelectorAll('.mock-menu button')].find(button=>button.textContent==='Sum').click();await settle(ctx);
   assert.deepEqual(saved,{'note.priority':'Sum'});assert.equal(ctx.options.summaries,undefined);
   const {config,data}=ctx.view;ctx.view.unload();ctx.view=new ManualOrderView({app:ctx.app},doc.getElementById('view'),ctx.plugin);ctx.view.config=config;ctx.view.data=data;ctx.view.onDataUpdated();assert.equal(totalSummary(ctx),'6');assert.equal(ctx.writes,0);
+});
+
+
+test('view decimal precision survives reopen without writes and controls fractional insertion',async()=>{
+  const ctx=setup([1,1.1,3]);ctx.options.orderDecimals='2';ctx.view.onDataUpdated();assert.equal(ctx.writes,0);
+  const {config,data}=ctx.view;ctx.view.unload();ctx.view=new ManualOrderView({app:ctx.app},ctx.dom.window.document.getElementById('view'),ctx.plugin);ctx.view.config=config;ctx.view.data=data;ctx.view.onDataUpdated();assert.equal(ctx.writes,0);
+  await ctx.view.move('Note 3.md','Note 2.md',false,0);
+  assert.deepEqual([...ctx.records.values()].map(record=>record.fm.priority),[1,1.1,1.05]);assert.equal(ctx.writes,1);
+  await ctx.plugin.undo();assert.deepEqual([...ctx.records.values()].map(record=>record.fm.priority),[1,1.1,3]);
+  ctx.options.orderDecimals='0';ctx.view.onDataUpdated();const before=ctx.writes;
+  await ctx.view.move('Note 3.md','Note 2.md',false,0);assert.equal(ctx.writes-before,2);
+  assert.ok([...ctx.plugin.undoReceipt.changes].every(change=>Number.isInteger(change.after)));
+  await ctx.plugin.undo();assert.deepEqual([...ctx.records.values()].map(record=>record.fm.priority),[1,1.1,3]);
+});
+test('multi-row drops preserve destination anchors and unchanged-position drops write nothing',async()=>{
+  const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc'}];ctx.options.orderDecimals='1';ctx.view.onDataUpdated();
+  await ctx.view.moveRowsToGroup(['Note 3.md'],ctx.view.groupTargets.find(target=>target.rows.some(row=>row.path==='Note 3.md')),{path:'Note 4.md',below:false});assert.equal(ctx.writes,0);
+  rowGrip(ctx,'Note 1.md').dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,ctrlKey:true}));rowGrip(ctx,'Note 2.md').dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,ctrlKey:true}));
+  await dropRows(ctx,'Note 1.md',cell(ctx,'Note 4.md','file.name').closest('tr'));
+  assert.deepEqual([...ctx.records.values()].map(record=>record.fm.priority),[3.3,3.6,3,4]);assert.equal(ctx.writes,2);
+  await ctx.plugin.undoEdit();assert.deepEqual([...ctx.records.values()].map(record=>record.fm.priority),[1,2,3,4]);
+});
+
+
+const viewPaths=ctx=>ctx.view.groups.flat().map(row=>row.path);
+function viewStorage(ctx){ctx.options.orderStorage='view';ctx.view.onDataUpdated();}
+test('Base view ordering saves once, reads/writes no notes, preserves cells and supports undo',async()=>{
+  const ctx=setup();viewStorage(ctx);let reads=0,saves=0;ctx.app.vault.read=async()=>{reads++;throw new Error('Unexpected note read');};
+  const set=ctx.view.config.set;ctx.view.config.set=(key,value)=>{if(key==='manualViewRanks')saves++;set(key,value);};
+  const table=ctx.dom.window.document.querySelector('table');
+  await ctx.view.move('Note 3.md','Note 2.md',false,0);
+  assert.equal(reads,0);assert.equal(ctx.writes,0);assert.equal(saves,1);assert.equal(ctx.options.manualViewRanks['Note 3.md'],1.5);
+  assert.deepEqual(viewPaths(ctx),['Note 1.md','Note 3.md','Note 2.md']);assert.equal(ctx.dom.window.document.querySelector('table'),table);
+  assert.deepEqual([...ctx.records.values()].map(record=>record.fm.priority),[1,2,3]);
+  await ctx.plugin.undo();assert.equal(ctx.options.manualViewRanks,undefined);assert.deepEqual(viewPaths(ctx),['Note 1.md','Note 2.md','Note 3.md']);assert.equal(ctx.writes,0);
+});
+test('Base view order reopens, is independent per view and leaves note-mode ranks unchanged',async()=>{
+  const ctx=setup();viewStorage(ctx);await ctx.view.move('Note 3.md','Note 2.md',false,0);
+  const {config,data}=ctx.view;ctx.view.unload();ctx.view=new ManualOrderView({app:ctx.app},ctx.dom.window.document.getElementById('view'),ctx.plugin);ctx.view.config=config;ctx.view.data=data;ctx.view.onDataUpdated();
+  assert.deepEqual(viewPaths(ctx),['Note 1.md','Note 3.md','Note 2.md']);
+  ctx.options.orderStorage='note';ctx.view.onDataUpdated();assert.deepEqual(viewPaths(ctx),['Note 1.md','Note 2.md','Note 3.md']);
+  ctx.options.orderStorage='view';ctx.view.onDataUpdated();assert.deepEqual(viewPaths(ctx),['Note 1.md','Note 3.md','Note 2.md']);
+  const host=ctx.dom.window.document.createElement('div');ctx.dom.window.document.body.append(host);const other=new ManualOrderView({app:ctx.app},host,ctx.plugin);
+  other.config={...config,get:key=>key==='manualViewRanks'?undefined:config.get(key)};other.data=data;other.onDataUpdated();assert.deepEqual(other.groups.flat().map(row=>row.path),['Note 1.md','Note 2.md','Note 3.md']);assert.equal(ctx.writes,0);other.unload();
+});
+test('view ranks survive filters and new query results append until manually positioned',async()=>{
+  const ctx=setup([1,2,3,0]);ctx.view.data.data=ctx.entries.slice(0,3);ctx.view.data.groupedData=[{entries:ctx.entries.slice(0,3),hasKey:()=>false}];viewStorage(ctx);
+  await ctx.view.move('Note 3.md','Note 2.md',false,0);const hidden=ctx.options.manualViewRanks['Note 2.md'];
+  ctx.view.data.data=[ctx.entries[0],ctx.entries[2]];ctx.view.data.groupedData=[{entries:ctx.view.data.data,hasKey:()=>false}];ctx.view.onDataUpdated();await ctx.view.move('Note 3.md','Note 1.md',false,0);
+  assert.equal(ctx.options.manualViewRanks['Note 2.md'],hidden);
+  ctx.view.data.data=ctx.entries;ctx.view.data.groupedData=[{entries:ctx.entries,hasKey:()=>false}];ctx.view.onDataUpdated();assert.deepEqual(viewPaths(ctx),['Note 3.md','Note 1.md','Note 2.md','Note 4.md']);assert.equal(ctx.writes,0);
+});
+test('non-numeric note ranks do not prevent Base view ordering or get overwritten',async()=>{
+  const ctx=setup(['high','low','medium']);viewStorage(ctx);assert.equal(ctx.view.valid,true);
+  await ctx.view.move('Note 3.md','Note 1.md',false,0);assert.deepEqual(viewPaths(ctx),['Note 3.md','Note 1.md','Note 2.md']);assert.deepEqual([...ctx.records.values()].map(record=>record.fm.priority),['high','low','medium']);assert.equal(ctx.writes,0);
+});
+test('failed Base view saves restore visible order and conflicting settings block undo',async()=>{
+  const ctx=setup();viewStorage(ctx);const save=ctx.view.config.set;ctx.view.config.set=(key,value)=>{if(key==='manualViewRanks')throw new Error('disk full');save(key,value);};
+  await ctx.view.move('Note 3.md','Note 2.md',false,0);assert.deepEqual(viewPaths(ctx),['Note 1.md','Note 2.md','Note 3.md']);assert.equal(ctx.options.manualViewRanks,undefined);assert.match(globalThis.notices.at(-1),/disk full/);
+  ctx.view.config.set=save;await ctx.view.move('Note 3.md','Note 2.md',false,0);ctx.options.manualViewRanks={...ctx.options.manualViewRanks,'Note 3.md':9};ctx.view.onDataUpdated();await ctx.plugin.undo();assert.equal(ctx.options.manualViewRanks['Note 3.md'],9);assert.match(globalThis.notices.at(-1),/view order changed/);assert.equal(ctx.writes,0);
+});
+test('renames migrate saved view ranks and reorder undo follows the renamed file',async()=>{
+  const ctx=setup();viewStorage(ctx);await ctx.view.move('Note 2.md','Note 1.md',false,0);
+  await ctx.view.editCell(ctx.entries[1],'file.name');editorInput(ctx).value='Renamed.md';await ctx.view.editor.save();
+  assert.equal(ctx.options.manualViewRanks['Renamed.md'],0);assert.equal(ctx.options.manualViewRanks['Note 2.md'],undefined);
+  await ctx.plugin.undo();assert.equal(ctx.options.manualViewRanks,undefined);assert.deepEqual([...ctx.records.values()].map(record=>record.fm.priority).sort(),[1,2,3]);
+});
+test('positioned group moves save view order and membership together and undo both',async()=>{
+  const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc'}];viewStorage(ctx);
+  rowGrip(ctx,'Note 1.md').dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,ctrlKey:true}));rowGrip(ctx,'Note 2.md').dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,ctrlKey:true}));
+  await dropRows(ctx,'Note 1.md',cell(ctx,'Note 4.md','file.name').closest('tr'));
+  assert.deepEqual([...ctx.records.values()].map(record=>record.fm.priority),[1,2,3,4]);assert.equal(ctx.writes,2);
+  assert.equal(ctx.options.manualViewRanks['Note 1.md'],3.33);assert.equal(ctx.options.manualViewRanks['Note 2.md'],3.66);
+  await ctx.plugin.undoEdit();assert.equal(ctx.options.manualViewRanks,undefined);assert.equal(ctx.records.get('Note 1.md').fm.team,'A');assert.equal(ctx.records.get('Note 2.md').fm.team,'A');
+});
+test('failed group property writes roll view ordering back without adding undo history',async()=>{
+  const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc'}];viewStorage(ctx);ctx.app.fileManager.processFrontMatter=async()=>{throw new Error('write failed');};
+  await dropRows(ctx,'Note 1.md',cell(ctx,'Note 4.md','file.name').closest('tr'));
+  assert.equal(ctx.options.manualViewRanks,undefined);assert.equal(ctx.records.get('Note 1.md').fm.team,'A');assert.equal(ctx.plugin.editHistory.length,0);
+});
+test('note ordering reads a bounded number of changed notes and anchors in a large group',async()=>{
+  const ctx=setup(Array.from({length:250},(_,i)=>i+1));let reads=0;const read=ctx.app.vault.read;ctx.app.vault.read=async file=>{reads++;return read(file);};
+  await ctx.view.move('Note 250.md','Note 2.md',false,0);assert.equal(ctx.writes,1);assert.ok(reads<=7,`expected bounded reads, received ${reads}`);assert.equal(ctx.records.get('Note 250.md').fm.priority,1.5);
+});
+
+test('saved Base view ranks are pruned for deleted files on the next move',async()=>{
+  const ctx=setup([1,2,3,4]);viewStorage(ctx);await ctx.view.move('Note 3.md','Note 2.md',false,0);assert.equal(ctx.options.manualViewRanks['Note 4.md'],4);
+  ctx.records.delete('Note 4.md');ctx.view.data.data=ctx.entries.slice(0,3);ctx.view.data.groupedData=[{entries:ctx.view.data.data,hasKey:()=>false}];ctx.view.onDataUpdated();
+  await ctx.view.move('Note 3.md','Note 1.md',false,0);assert.equal(ctx.options.manualViewRanks['Note 4.md'],undefined);assert.equal(ctx.writes,0);
+});
+test('descending Base view ordering uses fractional ranks without changing note ranks',async()=>{
+  const ctx=setup();ctx.options.orderDirection='desc';viewStorage(ctx);await ctx.view.move('Note 1.md','Note 2.md',false,0);
+  assert.equal(ctx.options.manualViewRanks['Note 1.md'],2.5);assert.deepEqual(viewPaths(ctx),['Note 3.md','Note 1.md','Note 2.md']);assert.equal(ctx.writes,0);
+});
+test('failed undo of group membership restores the saved view order and retains history',async()=>{
+  const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc'}];viewStorage(ctx);await dropRows(ctx,'Note 1.md',cell(ctx,'Note 4.md','file.name').closest('tr'));
+  const saved=structuredClone(ctx.options.manualViewRanks);ctx.records.get('Note 1.md').fm.team='External';await ctx.plugin.undoEdit();
+  assert.deepEqual(ctx.options.manualViewRanks,saved);assert.equal(ctx.records.get('Note 1.md').fm.team,'External');assert.equal(ctx.plugin.editHistory.length,1);
+});
+
+test('a failed rank migration does not turn an already successful file rename into a failed note edit',async()=>{
+  const ctx=setup();viewStorage(ctx);await ctx.view.move('Note 2.md','Note 1.md',false,0);const save=ctx.view.config.set;
+  ctx.view.config.set=(key,value)=>{if(key==='manualViewRanks')throw new Error('read-only Base');save(key,value);};
+  await ctx.view.editCell(ctx.entries[1],'file.name');editorInput(ctx).value='Renamed.md';assert.equal(await ctx.view.editor.save(),true);
+  assert.equal(ctx.records.has('Renamed.md'),true);assert.equal(ctx.plugin.editHistory.length,1);assert.ok(globalThis.notices.some(message=>/rank could not be saved/.test(message)));
+});
+
+
+function addCatalogueValue(ctx,property,text){const form=valueMenu(ctx,property).querySelector('form');form.querySelector('input').value=text;form.dispatchEvent(new ctx.dom.window.Event('submit',{cancelable:true}));}
+test('horizontal group values can be added, remain when unused, and survive reopen',async()=>{
+  const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc'}];ctx.view.onDataUpdated();addCatalogueValue(ctx,'note.team','Future');await settle(ctx);
+  assert.ok(groupHeader(ctx,'note.team: Future'));assert.equal(groupHeader(ctx,'note.team: Future').querySelector('.manual-order-group-count').textContent,'0');
+  for(const record of ctx.records.values())record.fm.team='B';ctx.view.onDataUpdated();assert.ok(groupHeader(ctx,'note.team: A'));assert.equal(ctx.writes,0);
+  const {config,data}=ctx.view;ctx.view.unload();ctx.view=new ManualOrderView({app:ctx.app},ctx.dom.window.document.getElementById('view'),ctx.plugin);ctx.view.config=config;ctx.view.data=data;ctx.view.onDataUpdated();assert.ok(groupHeader(ctx,'note.team: A'));assert.ok(groupHeader(ctx,'note.team: Future'));
+});
+test('removing used group values changes only the view and explicit re-add restores their notes',async()=>{
+  const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc',layout:'vertical'}];ctx.view.onDataUpdated();
+  valueMenu(ctx,'note.team').querySelector('[aria-label="Remove group A"]').click();await settle(ctx);assert.equal(groupHeader(ctx,'note.team: A'),undefined);assert.equal(valueMenu(ctx,'note.team').querySelector('[aria-label="Remove group A"]'),null);assert.equal(ctx.writes,0);assert.equal(ctx.records.get('Note 1.md').fm.team,'A');
+  ctx.view.onDataUpdated();assert.equal(groupHeader(ctx,'note.team: A'),undefined);
+  const {config,data}=ctx.view;ctx.view.unload();ctx.view=new ManualOrderView({app:ctx.app},ctx.dom.window.document.getElementById('view'),ctx.plugin);ctx.view.config=config;ctx.view.data=data;ctx.view.onDataUpdated();assert.equal(groupHeader(ctx,'note.team: A'),undefined);
+  addCatalogueValue(ctx,'note.team','A');await settle(ctx);assert.ok(groupHeader(ctx,'note.team: A'));assert.equal(ctx.view.groups.flat().length,4);assert.equal(ctx.writes,0);
+});
+test('an empty filtered Base can add and remove horizontal and nested group destinations',async()=>{
+  const ctx=setup([]);ctx.options.manualGroups=[{property:'note.team',direction:'asc'},{property:'note.status',direction:'asc'}];ctx.view.onDataUpdated();
+  addCatalogueValue(ctx,'note.team','Project');await settle(ctx);addCatalogueValue(ctx,'note.status','Ready');await settle(ctx);assert.ok(groupHeader(ctx,'note.team: Project'));assert.ok(groupHeader(ctx,'note.status: Ready'));
+  valueMenu(ctx,'note.status').querySelector('[aria-label="Remove group Ready"]').click();await settle(ctx);assert.equal(groupHeader(ctx,'note.status: Ready'),undefined);assert.equal(ctx.writes,0);
+});
+test('typed numeric values persist and duplicate additions stay deduplicated',async()=>{
+  const ctx=setup([0,1]);ctx.options.manualGroups=[{property:'note.priority',direction:'asc'}];ctx.view.onDataUpdated();
+  addCatalogueValue(ctx,'note.priority','2');await settle(ctx);addCatalogueValue(ctx,'note.priority','2');await settle(ctx);
+  assert.equal(ctx.options.manualGroupValues['note.priority'].added.filter(value=>value===2).length,1);assert.ok(groupHeader(ctx,'note.priority: 0'));assert.ok(groupHeader(ctx,'note.priority: 2'));assert.equal(ctx.writes,0);
+});
+test('failed removal saves retain the previous catalogue and visible rows',async()=>{
+  const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc'}];ctx.view.onDataUpdated();const previous=structuredClone(ctx.options.manualGroupValues),save=ctx.view.config.set;
+  ctx.view.config.set=(key,value)=>{if(key==='manualGroupValues')throw new Error('catalogue write failed');save(key,value);};
+  valueMenu(ctx,'note.team').querySelector('[aria-label="Remove group A"]').click();await settle(ctx);assert.ok(groupHeader(ctx,'note.team: A'));assert.deepEqual(ctx.options.manualGroupValues,previous);assert.equal(ctx.writes,0);
+});
+
+test('No value groups persist as empty values and can be removed and explicitly restored',async()=>{
+  const ctx=setup([undefined,2]);ctx.options.manualGroups=[{property:'note.priority',direction:'asc'}];ctx.view.onDataUpdated();assert.ok(groupHeader(ctx,'note.priority: No value'));
+  valueMenu(ctx,'note.priority').querySelector('[aria-label="Remove group No value"]').click();await settle(ctx);assert.equal(groupHeader(ctx,'note.priority: No value'),undefined);
+  valueMenu(ctx,'note.priority').querySelector('[aria-label="Add empty note.priority group"]').click();await settle(ctx);assert.ok(groupHeader(ctx,'note.priority: No value'));assert.equal(ctx.writes,0);
+  assert.equal(ctx.options.manualGroupValues['note.priority'].known.some(value=>value==='No value'),false);
 });

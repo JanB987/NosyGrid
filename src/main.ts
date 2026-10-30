@@ -1,6 +1,6 @@
 import { Plugin, BasesView, Notice, Keymap, Menu, parseYaml, getFrontMatterInfo, setIcon,
   type QueryController, type BasesEntry, type BasesPropertyId, type Value, type TFile, type BasesAllOptions } from 'obsidian';
-import { applyChanges, numericRank, planMove, propertyName, sortRows, type Change, type Row, type Direction } from './order';
+import { applyChanges, numericRank, planMove, planOrder, rankPrecision, rankGuards, propertyName, sortRows, type Change, type Row, type Direction } from './order';
 import { editableProperty, readCell, readCells, writeCell, sameValue, inferType, parsePropertyTypes, formatValue, renameTarget, type CellSnapshot, type CellValue, type EditorType } from './editing';
 import { CellEditor } from './cell-editor';
 import {renderPropertyLinks} from './link-render';
@@ -20,7 +20,7 @@ import {RowDragScroll} from './row-drag-scroll';
 import {RowDragPreview} from './row-drag-preview';
 import {BoardAlignment,boardScopeKey,collectBoardPlans} from './board-alignment';
 import {BoardOrder,BOARD_ORDER_KEY,readBoardOrders,applyBoardOrder} from './board-order';
-import {GROUP_VALUES_KEY,readValueSettings,addGroupValues,type ValueSection} from './group-values';
+import {GROUP_VALUES_KEY,readValueSettings,type ValueSection} from './group-values';
 import {renderValueMenu} from './group-values-menu';
 import {completeVerticalGroups} from './continuous-groups';
 import {GROUP_COLORS_KEY,readGroupColors,applyGroupColors} from './group-colors';
@@ -28,12 +28,13 @@ import {Summaries,readViewSummaries,setViewSummary,summaryMenu} from './summarie
 
 import {expectRecord,fileProperties,boardProperty} from './validation';
 import {caretRangeAtPoint} from './caret-position';
+import {ViewOrder,type OrderEdit} from './view-order';
 
 const VIEW = 'manual-order-table';
 interface TableRow extends Row { entry: BasesEntry }
 interface GroupTarget {key:string;bindings:GroupBinding[];rows:TableRow[];leaf:boolean;nativeId?:string;unknownNative?:boolean}
-interface Receipt { property: string; changes: Change[]; originals: Map<string, {exists:boolean; value:unknown}>; baseline?: Row[] }
-type EditHistory=CellEdit|{changes:CellEdit[]};
+interface Receipt { property: string; changes: Change[]; originals: Map<string, {exists:boolean; value:unknown}>; baseline?: Row[];direction?:Direction }
+type EditHistory=CellEdit|{changes:CellEdit[];order?:OrderEdit};
 
 export default class ManualOrderPlugin extends Plugin {
   private availabilityTimer?:number;
@@ -41,6 +42,7 @@ export default class ManualOrderPlugin extends Plugin {
   batchWriting=false;
   views = new Set<ManualOrderView>();
   undoReceipt?: Receipt;
+  viewOrderUndo?:OrderEdit;
   editorOwner?: ManualOrderView;
   editHistory: EditHistory[] = [];
   cellOverrides = new Map<string,{snapshot:CellSnapshot; until:number}>();
@@ -56,8 +58,10 @@ export default class ManualOrderPlugin extends Plugin {
       name: 'NosyGrid', icon: 'list-ordered',
       factory: (controller, container) => new ManualOrderView(controller, container, this),
       options: ():BasesAllOptions[] => [
+        {type:'dropdown',key:'orderStorage',displayName:'Order storage',default:'note',options:{note:'Note property',view:'Base view'}},
         {type:'text',key:'orderProperty',displayName:'Ordering property',default:'priority',placeholder:'priority'},
         {type:'dropdown',key:'orderDirection',displayName:'Order direction',default:'asc',options:{asc:'A → Z (lowest first)',desc:'Z → A (highest first)'}},
+        {type:'dropdown',key:'orderDecimals',displayName:'Maximum decimal places',default:'2',options:{'0':'0 (integers)','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6'}},
         {type:'dropdown',key:NATIVE_LAYOUT_KEY,displayName:'Primary group layout',default:'horizontal',options:{horizontal:'Horizontal groups',vertical:'Vertical board columns'}},
       ],
     });
@@ -70,7 +74,7 @@ export default class ManualOrderPlugin extends Plugin {
     };
     this.registerEvent(this.app.metadataCache.on('changed',availability));
     this.registerEvent(this.app.vault.on('delete',availability));
-    this.registerEvent(this.app.vault.on('rename',availability));
+    this.registerEvent(this.app.vault.on('rename',(file,oldPath)=>{for(const view of this.views)view.renameRow(oldPath,file.path);availability();}));
     this.register(()=>{if(this.availabilityTimer!==undefined)window.clearTimeout(this.availabilityTimer);});
   }
 
@@ -139,17 +143,20 @@ export default class ManualOrderPlugin extends Plugin {
   }
   private remember(history:EditHistory) {this.editHistory.push(history);if(this.editHistory.length>50)this.editHistory.shift();}
 
-  async commitBatch(changes:CellChange[],record=true):Promise<CellEdit[]> {
+  async commitBatch(changes:CellChange[],record=true,order?:OrderEdit):Promise<CellEdit[]> {
     if(this.busy||this.editorOwner)throw new Error('Finish the active edit before pasting.');
     this.busy=true;this.refresh();this.batchWriting=true;
+    let ordered=false;
     try {
+      if(order){order.redo();ordered=true;}
       const edits=await applyCellBatch(this.app,changes);
       // Migrate paths before installing note overlays, so they use the final filenames.
       for(const edit of edits.filter(edit=>edit.before.property.startsWith('file.')))this.recordSuccess(edit);
       for(const edit of edits.filter(edit=>edit.before.property.startsWith('note.')))this.recordSuccess(edit);
-      if(record&&edits.length)this.remember({changes:edits});
+      if(record&&(edits.length||order))this.remember({changes:edits,order});
       return edits;
     } catch(error) {
+      if(ordered)order?.undo();
       for(const {before} of changes){this.cellOverrides.delete(`${before.file.path}\0${before.property}`);if(before.property===`note.${this.pending.get(before.file.path)?.property}`)this.pending.delete(before.file.path);}
       throw error;
     } finally {this.batchWriting=false;this.busy=false;this.refresh();}
@@ -160,7 +167,11 @@ export default class ManualOrderPlugin extends Plugin {
     const receipt=this.editHistory.at(-1);
     if(!receipt) return;
     try {
-      if('changes' in receipt)await this.commitBatch(receipt.changes.map(change=>({before:change.after,after:change.before})),false);
+      if('changes' in receipt) {
+        receipt.order?.check();receipt.order?.undo();
+        try {await this.commitBatch(receipt.changes.map(change=>({before:change.after,after:change.before})),false);}
+        catch(error){receipt.order?.redo();throw error;}
+      }
       else await this.commitCell(receipt.after,receipt.before,false);
       this.editHistory.pop();this.refresh();
       new Notice('Table cell edit undone.');
@@ -173,9 +184,9 @@ export default class ManualOrderPlugin extends Plugin {
     this.refresh();
     const changes = undo ? receipt.changes.map(c=>({path:c.path,before:c.after,after:c.before})) : receipt.changes;
     try {
-      // Check the entire group, including unchanged ranks that a concurrent edit could move.
+      // Fresh-read changed notes and anchors, rather than every note in the group.
       const checks = !undo && receipt.baseline
-        ? receipt.baseline.map(row=>({path:row.path,before:row.rank})) : changes;
+        ? rankGuards(receipt.baseline,changes,receipt.direction??'asc').map(row=>({path:row.path,before:row.rank})) : changes;
       for (const change of checks) {
         const file = this.app.vault.getFileByPath(change.path);
         if (!file || file.extension !== 'md') throw new Error(`Cannot write ${change.path}.`);
@@ -203,7 +214,7 @@ export default class ManualOrderPlugin extends Plugin {
         this.pending.set(c.path,{property:receipt.property,rank:c.after});
         this.cellOverrides.delete(`${c.path}\0note.${receipt.property}`);
       }
-      this.undoReceipt = undo ? undefined : receipt;
+      this.undoReceipt = undo ? undefined : receipt;this.viewOrderUndo=undefined;
       new Notice(undo ? 'Row reorder undone.' : `Updated ${changes.length} note${changes.length===1?'':'s'}.`);
     } catch (error) {
       console.error('NosyGrid', error);
@@ -212,6 +223,8 @@ export default class ManualOrderPlugin extends Plugin {
   }
 
   async undo() {
+    if(this.busy||this.editorOwner)return;
+    if(this.viewOrderUndo){try{this.viewOrderUndo.undo();this.viewOrderUndo=undefined;this.refresh();}catch(error){new Notice(`Could not undo: ${String(error)}`);}return;}
     if (this.undoReceipt) await this.execute(this.undoReceipt,true);
     else new Notice('No row reorder to undo in this session.');
   }
@@ -243,6 +256,7 @@ export class ManualOrderView extends BasesView {
   private property = 'priority';
   private direction: Direction = 'asc';
   private valid = true;
+  private viewOrder:ViewOrder;
   private editor?: CellEditor|ListCellEditor;
   private loadingEditor=false;
   private disposed=false;
@@ -273,6 +287,7 @@ export class ManualOrderView extends BasesView {
   constructor(controller: QueryController, parent: HTMLElement, private plugin: ManualOrderPlugin) {
     super(controller);
     this.root = parent.createDiv({cls:'manual-order-bases'});
+    this.viewOrder=new ViewOrder(()=>this.config,()=>this.onDataUpdated(),path=>!!this.app.vault.getFileByPath(path));
     this.rowDragScroll=new RowDragScroll(this.root);
     this.rowDragPreview=new RowDragPreview(this.root);this.register(()=>this.rowDragPreview.destroy());
     this.summaries=new Summaries(this.root,controller,this.app,()=>readViewSummaries(this.config,this.summaryColumns()),property=>this.config.getDisplayName(property),(property,event)=>this.openSummaryMenu(property,event));
@@ -290,11 +305,12 @@ export class ManualOrderView extends BasesView {
     this.boardAlignment=new BoardAlignment(key=>this.boardLayout.widthFor(key),()=>this.boardLayout.measure());
     this.boardLayout=new BoardLayout(this.root,()=>this.config.get(BOARD_WIDTHS_KEY),value=>this.config.set(BOARD_WIDTHS_KEY,value),()=>{this.rowLayout.measure();this.onDataUpdated();},error=>new Notice(`Could not save group width: ${String(error)}`),()=>!this.plugin.busy&&!this.movingRows&&!this.loadingEditor&&!this.boardOrder.active,()=>this.boardAlignment.update());
     plugin.views.add(this);
-    this.register(()=>{ this.disposed=true; this.boardOrder.destroy();this.rowDragScroll.destroy(); this.boardAlignment.destroy(); this.boardLayout.destroy(); this.nativeGroupMenu.destroy(); this.editor?.dispose(); this.rowLayout.destroy(); this.selection.destroy(); if(plugin.editorOwner===this) plugin.editorOwner=undefined; plugin.views.delete(this); this.root.remove(); });
+    this.register(()=>{ this.disposed=true;if(this.plugin.viewOrderUndo?.owner===this.viewOrder)this.plugin.viewOrderUndo=undefined; this.boardOrder.destroy();this.rowDragScroll.destroy(); this.boardAlignment.destroy(); this.boardLayout.destroy(); this.nativeGroupMenu.destroy(); this.editor?.dispose(); this.rowLayout.destroy(); this.selection.destroy(); if(plugin.editorOwner===this) plugin.editorOwner=undefined; plugin.views.delete(this); this.root.remove(); });
   }
 
   onDataUpdated() {
     if (!this.data || this.disposed) return;
+    this.viewOrder.invalidate();
     this.updateLiveControls();
     if(this.editor || this.loadingEditor || this.plugin.batchWriting || this.plugin.busy)return;
     if(this.boardLayout.active){this.boardLayout.deferRefresh();return;}
@@ -314,12 +330,12 @@ export class ManualOrderView extends BasesView {
     this.summaries.begin();
     this.valid=true;
     try { this.property=propertyName(this.config.get('orderProperty')); }
-    catch (error) { this.valid=false; this.root.createDiv({cls:'manual-order-error',text:String(error)}); }
+    catch (error) {if(this.viewOrder.active())this.property='priority';else{this.valid=false;this.root.createDiv({cls:'manual-order-error',text:String(error)});}}
     this.direction=this.config.get('orderDirection')==='desc'?'desc':'asc';
     const bar=this.root.createDiv({cls:'manual-order-toolbar'});
-    bar.createSpan({text:`${this.property} · ${this.direction==='asc'?'A → Z':'Z → A'} · ${this.data.data.length} notes`});
+    bar.createSpan({text:`${this.viewOrder.active()?'Base view order':this.property} · ${this.direction==='asc'?'A → Z':'Z → A'} · ${this.data.data.length} notes`});
     const undo=bar.createEl('button',{text:'Undo reorder'});
-    undo.disabled=this.plugin.busy || !!this.plugin.editorOwner || !this.plugin.undoReceipt;
+    undo.disabled=this.plugin.busy || !!this.plugin.editorOwner || !(this.plugin.undoReceipt||this.plugin.viewOrderUndo);
     undo.onclick=()=>void this.plugin.undo();
     const undoEdit=bar.createEl('button',{text:'Undo edit'});
     undoEdit.disabled=this.plugin.busy || !!this.plugin.editorOwner || !this.plugin.editHistory.length;
@@ -339,17 +355,7 @@ export class ManualOrderView extends BasesView {
     bar.createSpan({cls:'manual-order-hint',text:this.plugin.busy?'Saving…':'Click to edit · Drag across cells to select · Drag ⋮⋮ to reorder'});
     bar.createSpan({cls:'manual-order-row-selection-status'});
     const nativeRows = this.data.groupedData.map(group=>sortRows(group.entries.map(entry=> {
-      let rank: number|undefined;
-      try {
-        // Read the underlying YAML type so strings like "1" are not silently overwritten.
-        rank=numericRank(this.cellValue(entry,`note.${this.property}`).value);
-      } catch { this.valid=false; }
-      const pending=this.plugin.pending.get(entry.file.path);
-      if (pending?.property===this.property) {
-        if (pending.rank===rank) this.plugin.pending.delete(entry.file.path);
-        else rank=pending.rank;
-      }
-      if (entry.file.extension!=='md') this.valid=false;
+      const state=this.rankState(entry),rank=state.rank;if(!state.valid)this.valid=false;
       return {path:entry.file.path,rank,entry};
     }),this.direction));
     if (!this.valid) this.root.createDiv({cls:'manual-order-error',text:'Reordering is unavailable. Choose a numeric note property and filter the Base to Markdown notes. Existing text values will not be overwritten.'});
@@ -505,26 +511,33 @@ export class ManualOrderView extends BasesView {
       return index.get(identity(bindings));
     };
     const valueSettings=readValueSettings(this.config.get(GROUP_VALUES_KEY));
-    // A filtered/empty Base can still offer explicitly added outer columns.
-    if(!liveGroups.length&&!hasNativeGroups&&rules[0]?.layout==='vertical') {
-      const property=rules[0].property;
-      for(const value of valueSettings[property]?.added??[]) {
-        const token=groupValueKey(groupIdentity(value,this.app,''));
-        liveGroups.push({key:JSON.stringify([property,token]),property,label:String(value),rows:[],children:[],bindings:[this.bindingValue(property,'',{exists:true,value})]});
-      }
-    }
+    const levels=[...(hasNativeGroups?[{property:nativeGroupProperty(this.config)??'native',vertical:this.config.get(NATIVE_LAYOUT_KEY)==='vertical'}]:[]),...rules.map(rule=>({property:rule.property,vertical:rule.layout==='vertical'}))];
+    const valueId=(property:string,value:unknown,source='')=>linkedBoardWidthKey(property,groupValueKey(groupIdentity(value,this.app,source)));
+    const pruneRemoved=(groups:DisplayGroup<TableRow>[])=>{
+      for(let i=groups.length-1;i>=0;i--){const group=groups[i],property=group.property??group.bindings[0]?.property;if(property&&valueSettings[property]?.removed?.includes(groupWidthKey(group)))groups.splice(i,1);else pruneRemoved(group.children);}
+    };
+    pruneRemoved(liveGroups);
     const saved=this.config.get(RETAINED_GROUPS_KEY);
     const retained=retainGroups(liveGroups,saved,signature,findVaultGroup);
-    addGroupValues(retained.groups,valueSettings,verticalGroup,groupWidthKey,(template,value)=>{
-      const property=template.property??template.bindings[0].property;
-      const ancestors=template.bindings.filter(binding=>binding.property!==property);
-      const binding=this.bindingValue(property,'',{exists:true,value});
-      const token=groupValueKey(groupIdentity(value,this.app,''));
-      const path=JSON.parse(template.key) as unknown[];
-      const key=template.property?JSON.stringify([...path.slice(0,-1),token]):JSON.stringify(['native-added',property,token]);
-      return {key,label:value===null||value===undefined||value===''?'No value':Array.isArray(value)?value.map(String).join(', '):String(value),property:template.property,bindings:[...ancestors,binding],rows:[],children:[],nativeId:template.property?template.nativeId:key};
-    });
-    const levels=[...(hasNativeGroups?[{property:nativeGroupProperty(this.config)??'native',vertical:this.config.get(NATIVE_LAYOUT_KEY)==='vertical'}]:[]),...rules.map(rule=>({property:rule.property,vertical:rule.layout==='vertical'}))];
+    pruneRemoved(retained.groups);
+    const retainedKeys=new Set<string>();const rememberKeys=(groups:DisplayGroup<TableRow>[])=>{for(const group of groups){retainedKeys.add(group.key);rememberKeys(group.children);}};rememberKeys(retained.groups);
+    if(retained.memory)retained.memory.groups=retained.memory.groups.filter(group=>retainedKeys.has(group.key));
+    const addValues=(groups:DisplayGroup<TableRow>[],depth=0,parent?:DisplayGroup<TableRow>)=>{
+      const level=levels[depth];if(!level||level.property==='native')return;
+      const property=level.property as BasesPropertyId,current=valueSettings[property];
+      const seen=new Set(groups.map(groupWidthKey));
+      // Root catalogues remain available across grouping changes;
+      // horizontal nested values retain their observed paths unless explicitly added.
+      const values=[...(current?.added??[]),...(depth===0?current?.known??[]:[])];
+      for(const value of values) {
+        const id=valueId(property,value);if(seen.has(id)||current?.removed?.includes(id))continue;seen.add(id);
+        const binding=this.bindingValue(property,'',{exists:value!==null&&value!==undefined&&value!=='',value}),prefix=parent?JSON.parse(parent.key) as unknown[]:[];
+        const native=depth===0&&hasNativeGroups,key=native?JSON.stringify(['native-added',property,groupValueKey(groupIdentity(value,this.app,''))]):JSON.stringify([...prefix,property,groupValueKey(groupIdentity(value,this.app,''))]);
+        groups.push({key,label:value===null||value===undefined||value===''?'No value':Array.isArray(value)?value.map(String).join(', '):String(value),property:native?undefined:property,bindings:[...(parent?.bindings??[]),binding],rows:[],children:[],nativeId:native?key:parent?.nativeId});
+      }
+      for(const group of groups)addValues(group.children,depth+1,group);
+    };
+    addValues(retained.groups);
     completeVerticalGroups(retained.groups,levels,groupWidthKey,(template,parent)=>{
       const property=template.property??template.bindings[0]?.property;
       const own=[...template.bindings].reverse().find(binding=>binding.property===property);
@@ -560,7 +573,7 @@ export class ManualOrderView extends BasesView {
         for(const group of groups) {
           const id=groupWidthKey(group),existing=section.items.find(item=>item.id===id),binding=group.bindings.find(binding=>binding.property===property);
           if(existing)existing.count+=group.rows.length;
-          else section.items.push({id,label:group.label,count:group.rows.length,value:binding?.value.value??group.label,source:binding?.sourcePath??''});
+          else section.items.push({id,label:group.label,count:group.rows.length,value:binding?binding.value.value:group.label,source:binding?.sourcePath??''});
         }
       }
       for(const group of groups)collectValues(group.children,vertical?[...ancestors,groupWidthKey(group)]:ancestors);
@@ -568,6 +581,17 @@ export class ManualOrderView extends BasesView {
     collectValues(retained.groups);
     for(const rule of rules)if(!sections.has(rule.property))sections.set(rule.property,{property:rule.property,items:[],scopes:[],vertical:rule.layout==='vertical'});
     const primary=nativeGroupProperty(this.config);if(primary&&!sections.has(primary))sections.set(primary,{property:primary,items:[],scopes:[],vertical:this.config.get(NATIVE_LAYOUT_KEY)==='vertical'});
+    for(const section of sections.values()) {
+      const present=new Set(section.items.map(item=>item.id));
+      const current=valueSettings[section.property]??{hidden:[],added:[],order:[]},known=new Map((current.known??[]).map(value=>[valueId(section.property,value),value]));
+      for(const item of section.items)if(!current.removed?.includes(item.id))known.set(item.id,rebaseGroupValue(item.value??null,this.app,item.source,''));
+      for(const [id,value]of known)if(!current.removed?.includes(id)&&!present.has(id))section.items.push({id,value,label:value===null||value===undefined||value===''?'No value':Array.isArray(value)?value.map(String).join(', '):String(value),count:0,source:''});
+      valueSettings[section.property]={...current,known:[...known].filter(([id])=>!current.removed?.includes(id)).map(([,value])=>value)};
+    }
+    const previousValues=this.config.get(GROUP_VALUES_KEY);
+    if(JSON.stringify(readValueSettings(previousValues))!==JSON.stringify(valueSettings)) {
+      try{this.config.set(GROUP_VALUES_KEY,valueSettings);}catch(error){new Notice(`Could not save group catalogue: ${String(error)}`);}
+    }
     this.valueSections=[...sections.values()];
     for(const section of this.valueSections) {
       const order=applyBoardOrder(section.items.map(item=>item.id),this.boardOrder.slots(section.scopes[0]));
@@ -624,7 +648,7 @@ export class ManualOrderView extends BasesView {
     const properties=[...new Set([...rules.map(rule=>rule.property),...(primary?[primary]:[])])];
     const value=(entry:BasesEntry,property:BasesPropertyId)=>property.startsWith('note.')?this.cellValue(entry,property):entry.getValue(property)?.toString();
     return JSON.stringify([
-      ['orderProperty','orderDirection',GROUPS_KEY,COLLAPSED_KEY,NATIVE_LAYOUT_KEY,BOARD_WIDTHS_KEY,BOARD_ORDER_KEY,GROUP_VALUES_KEY,RETAINED_GROUPS_KEY].map(key=>this.config.get(key)),
+      ['orderStorage','orderProperty','orderDirection','orderDecimals',GROUPS_KEY,COLLAPSED_KEY,NATIVE_LAYOUT_KEY,BOARD_WIDTHS_KEY,BOARD_ORDER_KEY,GROUP_VALUES_KEY,RETAINED_GROUPS_KEY].map(key=>this.config.get(key)),
       this.config.getOrder().map(id=>[id,this.config.getDisplayName(id)]),this.groupMenuOpen,nativeGroupScope(this.config),
       this.data.data.map(entry=>entry.file.path).sort(),this.data.data.every(entry=>this.rankState(entry).valid),
       this.data.groupedData.map(group=>[group.key?.toString(),group.hasKey(),group.entries.map(entry=>[entry.file.path,entry.file.name,properties.map(property=>value(entry,property))]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])))]),
@@ -637,10 +661,18 @@ export class ManualOrderView extends BasesView {
     return JSON.stringify([property.startsWith('note.')?this.cellValue(entry,property):undefined,this.plugin.propertyType(property,this.data.data),entry.getValue(property)?.toString(),property===`note.${this.property}`?this.rankState(entry).rank:undefined]);
   }
 
+  private noteRank(entry:BasesEntry):number|undefined {
+    const rank=numericRank(this.cellValue(entry,`note.${this.property}`).value),pending=this.plugin.pending.get(entry.file.path);
+    if(pending?.property===this.property){if(pending.rank===rank)this.plugin.pending.delete(entry.file.path);else return pending.rank;}
+    return rank;
+  }
   private rankState(entry:BasesEntry):{rank:number|undefined;valid:boolean} {
     try {
-      const rank=numericRank(this.cellValue(entry,`note.${this.property}`).value),pending=this.plugin.pending.get(entry.file.path);
-      return {rank:pending?.property===this.property?pending.rank:rank,valid:entry.file.extension==='md'};
+      if(this.viewOrder.active()) {
+        let seed:number|undefined;try{seed=this.noteRank(entry);}catch{/* Non-numeric seed properties do not disable view ordering. */}
+        return {rank:this.viewOrder.rank(entry.file.path,seed),valid:entry.file.extension==='md'};
+      }
+      return {rank:this.noteRank(entry),valid:entry.file.extension==='md'};
     } catch{return {rank:undefined,valid:false};}
   }
 
@@ -692,7 +724,7 @@ export class ManualOrderView extends BasesView {
     const locked=this.plugin.busy||!!this.plugin.editorOwner;
     const toolbar=this.root.querySelector('.manual-order-toolbar');
     for(const button of toolbar?.querySelectorAll<HTMLButtonElement>('button')??[]) {
-      if(button.textContent==='Undo reorder')button.disabled=locked||!this.plugin.undoReceipt;
+      if(button.textContent==='Undo reorder')button.disabled=locked||!(this.plugin.undoReceipt||this.plugin.viewOrderUndo);
       else if(button.textContent==='Undo edit')button.disabled=locked||!this.plugin.editHistory.length;
     }
     const hint=toolbar?.querySelector<HTMLElement>('.manual-order-hint');if(hint)hint.setText(this.plugin.busy?'Saving…':'Click to edit · Drag across cells to select · Drag ⋮⋮ to reorder');
@@ -727,7 +759,7 @@ export class ManualOrderView extends BasesView {
             }
             this.config.set(GROUP_VALUES_KEY,{...settings,[section.property]:next});this.onDataUpdated();this.nativeGroupMenu.refresh();
           } catch(error) {
-            try{this.config.set(GROUP_VALUES_KEY,previous??null);this.config.set(BOARD_ORDER_KEY,previousOrder??null);}catch(rollbackError){console.error('NosyGrid: could not restore view settings.',rollbackError);}
+            try{this.config.set(BOARD_ORDER_KEY,previousOrder??null);if(this.config.get(GROUP_VALUES_KEY)!==previous)this.config.set(GROUP_VALUES_KEY,previous??null);}catch(rollbackError){console.error('NosyGrid: could not restore view settings.',rollbackError);}
             new Notice(`Could not save group values: ${String(error)}`);this.onDataUpdated();this.nativeGroupMenu.refresh();
           }
         })();
@@ -743,7 +775,7 @@ export class ManualOrderView extends BasesView {
             const menu=this.root.querySelector<HTMLElement>('.manual-order-group-menu');if(menu){menu.empty();this.renderGroupControls(menu);}this.nativeGroupMenu.refresh();
           })();
         },
-      });
+      },value=>linkedBoardWidthKey(section.property,groupValueKey(groupIdentity(value,this.app,''))));
       const details=target.lastElementChild as HTMLDetailsElement;details.open=this.valueMenuOpen.has(section.property);
       details.ontoggle=()=>{if(!details.isConnected)return;if(details.open)this.valueMenuOpen.add(section.property);else this.valueMenuOpen.delete(section.property);};
     };
@@ -874,7 +906,7 @@ export class ManualOrderView extends BasesView {
           if(!sameValue(await readCell(this.app,file,binding.property),binding.original))throw new Error('The destination group changed. Try the move again.');
         }
       }
-      const changes:CellChange[]=[];
+      const changes:CellChange[]=[];let orderEdit:OrderEdit|undefined;
       for(const path of moved) {
         const entry=entries.get(path);if(!entry)throw new Error(`Missing row: ${path}`);
         let destinationPath=path;
@@ -896,27 +928,34 @@ export class ManualOrderView extends BasesView {
           const before=renameSnapshots.get(property)??await readCell(this.app,entry.file,property);
           if(sameValue({exists:true,value:groupIdentity(before.value,this.app,path)},{exists:true,value:groupIdentity(binding.value.value,this.app,binding.sourcePath)}))continue;
           const after={...binding.value,value:property.startsWith('note.')?rebaseGroupValue(binding.value.value,this.app,binding.sourcePath,destinationPath):binding.value.value};
-          if(property===`note.${this.property}`&&after.exists)numericRank(after.value);
+          if(!this.viewOrder.active()&&property===`note.${this.property}`&&after.exists)numericRank(after.value);
           changes.push({before,after});
         }
       }
-      // A positioned drop renumbers only the destination leaf; parent-header drops
+      // A positioned drop allocates sparse ranks within the destination leaf; parent-header drops
       // change membership while retaining the rows' existing ordering values.
       const rankProperty=`note.${this.property}` as BasesPropertyId;
-      if(position&&target.leaf&&!bindings.has(rankProperty)) {
+      if(position&&target.leaf&&(this.viewOrder.active()||!bindings.has(rankProperty))) {
         if(!this.valid)throw new Error('Choose a numeric ordering property before positioning rows.');
         const order=target.rows.map(row=>row.path).filter(path=>!moved.includes(path));
         const index=order.indexOf(position.path);if(index<0)return;
         order.splice(index+(position.below?1:0),0,...moved);
-        for(let i=0;i<order.length;i++) {
-          const entry=entries.get(order[i]);if(!entry)throw new Error('The destination rows changed.');
-          const before=await readCell(this.app,entry.file,rankProperty);
-          const rank=this.direction==='asc'?i+1:order.length-i;
-          changes.push({before,after:{exists:true,value:rank}});
+        const ranked=order.map(path=>{const entry=entries.get(path);if(!entry)throw new Error('The destination rows changed.');return {path,rank:this.rankState(entry).rank};});
+        const sameOrder=order.length===target.rows.length&&order.every((path,index)=>path===target.rows[index].path);
+        const planned=sameOrder?[]:planOrder(ranked,moved,this.direction,rankPrecision(this.config.get('orderDecimals')));
+        if(this.viewOrder.active())orderEdit=this.viewOrder.plan(this.data.data.map(entry=>({path:entry.file.path,rank:this.rankState(entry).rank})),planned);
+        else {
+          const snapshots=new Map<string,CellSnapshot>();
+          for(const guard of rankGuards(ranked,planned,this.direction)) {
+            const before=await readCell(this.app,entries.get(guard.path)!.file,rankProperty);
+            if(numericRank(before.value)!==guard.rank)throw new Error('The destination ranks changed. Try the move again.');
+            snapshots.set(guard.path,before);
+          }
+          for(const change of planned)changes.push({before:snapshots.get(change.path)!,after:{exists:true,value:change.after}});
         }
       }
       if(this.disposed||revision!==this.revision)throw new Error('The table changed during the move. Try again.');
-      await this.plugin.commitBatch(changes);
+      await this.plugin.commitBatch(changes,true,orderEdit);
       new Notice(`Moved ${moved.length} row${moved.length===1?'':'s'}. Use Undo edit to restore.`);
     } catch(error){new Notice(`Could not move rows: ${error instanceof Error?error.message:String(error)}`,8000);}
     finally {this.movingRows=false;}
@@ -1040,7 +1079,7 @@ export class ManualOrderView extends BasesView {
         link.onmouseover=event=>this.app.workspace.trigger('hover-link',{event,source:'bases',hoverParent:this.app.renderContext,targetEl:link,linktext:row.path});
         const rename=content.createEl('button',{cls:'manual-order-rename',attr:{'aria-label':`Rename ${row.entry.file.basename}`,title:'Rename file'}});
         setIcon(rename,'pencil');rename.onclick=event=>{event.stopPropagation();void this.editCell(row.entry,property);};
-      } else if (property===`note.${this.property}`) content.setText(row.rank===undefined?'':String(row.rank));
+      } else if (!this.viewOrder.active()&&property===`note.${this.property}`) content.setText(row.rank===undefined?'':String(row.rank));
       else if(property.startsWith('note.') && editable) {
         const current=this.cellValue(row.entry,property);
         const type=this.plugin.propertyType(property,this.data.data);
@@ -1089,7 +1128,7 @@ export class ManualOrderView extends BasesView {
     void action().finally(()=>{this.rowDropPending=false;this.rowDragPreview.stop();this.rowDragScroll.unlock();});
   }
 
-  renameRow(oldPath:string,newPath:string) {this.selection.renamePath(oldPath,newPath);this.rowLayout.rename(oldPath,newPath);if(this.selectedRows.delete(oldPath))this.selectedRows.add(newPath);if(this.rowAnchor===oldPath)this.rowAnchor=newPath;}
+  renameRow(oldPath:string,newPath:string) {try{this.viewOrder.rename(oldPath,newPath);}catch(error){new Notice(`File renamed, but its view rank could not be saved: ${String(error)}`,8000);}this.selection.renamePath(oldPath,newPath);this.rowLayout.rename(oldPath,newPath);if(this.selectedRows.delete(oldPath))this.selectedRows.add(newPath);if(this.rowAnchor===oldPath)this.rowAnchor=newPath;}
 
   private readonly onCopy=(event:ClipboardEvent)=>{
     if(!event.clipboardData)return;
@@ -1193,8 +1232,11 @@ export class ManualOrderView extends BasesView {
 
   private async move(source:string,target:string,below:boolean,group:number) {
     if (!this.valid || this.plugin.busy || this.plugin.editorOwner) return;
-    const changes=planMove(this.groups[group],source,target,below,this.direction);
-    if (changes.length) await this.plugin.execute({property:this.property,changes,originals:new Map(),baseline:this.groups[group].map(({path,rank})=>({path,rank}))});
+    try {
+      const changes=planMove(this.groups[group],source,target,below,this.direction,rankPrecision(this.config.get('orderDecimals')));
+      if(this.viewOrder.active()){const order=this.viewOrder.plan(this.data.data.map(entry=>({path:entry.file.path,rank:this.rankState(entry).rank})),changes);if(order){order.redo();this.plugin.viewOrderUndo=order;this.plugin.undoReceipt=undefined;this.updateLiveControls();}return;}
+      if (changes.length) await this.plugin.execute({property:this.property,changes,originals:new Map(),baseline:this.groups[group].map(({path,rank})=>({path,rank})),direction:this.direction});
+    } catch(error){new Notice(`Could not reorder rows: ${String(error)}`,8000);}
   }
 
   private cellValue(entry:BasesEntry, property:BasesPropertyId): CellValue {

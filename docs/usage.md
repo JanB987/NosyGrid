@@ -4,14 +4,24 @@ See the [README](../README.md) for installation, screenshots and a quick start.
 
 ## Ordering and writes
 
-- Only a real numeric frontmatter property can control manual order. File and formula properties are read-only and cannot be selected as the ordering property. Text values such as `high` or `"1"` disable reordering rather than being overwritten.
-- A successful move assigns the visible group's notes consecutive values 1…N. Ascending gives the first row 1; descending gives the first row N. Only changed values are written. Merely opening a view never edits notes.
-- Empty values appear after numbered notes. Equal values are ordered by file path until the next move gives every row a distinct rank.
-- Grouped Bases are supported. Reorder within a group; crossing groups is disabled. Each group has its own 1…N sequence.
+- **Order storage** defaults to **Note property** for existing views. In that mode, only a real numeric frontmatter property can control manual order. File and formula properties are read-only and cannot be selected as the ordering property. Text values such as `high` or `"1"` disable reordering rather than being overwritten.
+- Set **Maximum decimal places** in the Base view settings (0–6, default 2). Reordering allocates fractional ranks inside the destination gap, changing only the moved notes whenever possible. A move between 1 and 2 can assign 1.5. When the decimal grid has no space, only the smallest surrounding range is rebalanced. Boundary moves extend the range; zero and negative ranks are valid. Changing precision or opening a view never rewrites existing values, including values with more decimals than the current setting.
+- Empty values appear after numbered notes. Equal values use file-path ordering. A move assigns distinct ranks only where needed to establish the requested position; unrelated duplicates are left alone.
+- Grouped Bases are supported. Reorder within a leaf group, or move rows between groups to update their grouping properties. Positional drops use the same fractional allocation within the destination group; group-header drops preserve existing ranks.
 - Only notes returned by the Base query are involved. Notes outside the filters or row limit are untouched. Because filtering/limits are applied by Bases before the view receives data, use an unlimited Base when you want a vault-wide or project-wide sequence. Hidden notes can retain duplicate ranks.
 - The view's ordering property and direction take precedence over the normal Bases Sort menu. Avoid a Base row limit that selects a different subset via other sorting rules.
 - Writes use Obsidian's `processFrontMatter`, preserving note content and other properties. Obsidian may normalize YAML formatting. Fresh-value checks prevent overwriting conflicting rank edits; completed writes are rolled back if a later write fails. Obsidian has no multi-file atomic transaction: a crash or sync interruption can still leave a partial operation.
 - **Undo reorder** and the **NosyGrid: Undo last row reorder** command restore the latest successful move in this app session. Undo checks for later rank edits and refuses to overwrite conflicts. History is cleared on plugin reload. This is separate from the editor's Ctrl+Z history.
+
+### Base-view ordering
+
+Choose **Order storage → Base view** to save ranks in the view configuration rather than note frontmatter. The first move seeds existing numeric ranks from the chosen ordering property; text values are ignored. Subsequent new results append after ranked notes until positioned manually. Each Base view keeps independent ranks, including notes temporarily excluded by filters. Switching back to Note property restores ordering by the actual note values without exporting view ranks into the notes.
+
+Pure reorders use no Markdown-file I/O. The table moves existing row elements immediately, then saves the view configuration. Save failures restore the prior visible order. **Undo reorder** restores the previous view ranks. Positioned group moves still write group properties in the notes and combine those edits with the view order in **Undo edit**. Conflicting view settings or note edits block undo.
+
+Rank keys follow renames while their view is open. Renames made while a view is closed appear as new results on reopen. Deleted paths are pruned on the next reorder; filtered-out paths are retained. Native Bases filtering and limits happen before NosyGrid receives results and cannot use these private view ranks. Normal property cells always show real note values.
+
+Note-property mode now fresh-reads only changed notes and adjacent anchors in the old/new positions. It no longer scans and parses every note in the group on each reorder. A concurrent edit to an unrelated note outside those guards is reflected by the normal metadata refresh rather than a full-vault transaction check.
 
 ## Editing cells (v0.8.0)
 
@@ -128,18 +138,20 @@ Group headers display aliased note links using Obsidian's public LinkValue rende
 
 - Press a row's grip to select it immediately, then drag to reorder or move it. Ctrl/Cmd-click grips to toggle individual rows, or Shift-click a second grip to select the visible range from the anchor. Dragging a selected grip preserves the selected block. Pressing an unselected grip without modifiers replaces the selection. Clicking a cell, empty space or another control clears row selection and performs that control's normal action. Selection circles and the header checkbox have been removed. Right-click a grip for Move up/down; Alt+Up/Down continues to move a focused row. Row selection is separate from cell and list-item selection.
 - Drag any selected row's grip to move the selected rows together, in their visible order. Dragging an unselected grip moves just that row. Drop on a **group header**, including a collapsed header, to set that group's property and all ancestor grouping properties. Deeper grouping properties and existing numeric ranks stay unchanged for header drops. The collapsed state is retained.
-- Drop above/below a row in another group to change membership and insert at that position. Destination ranks are rewritten in the configured A → Z / Z → A direction. If the ordering property itself is a grouping property, that grouping value takes precedence over positional ranking. Single-row reordering within the same group keeps the existing **Undo reorder** behavior.
+- Drop above/below a row in another group to change membership and insert at that position. New ranks follow the configured A → Z / Z → A direction, preserving destination neighbours unless local rebalancing is needed. If the ordering property itself is a grouping property, that grouping value takes precedence over positional ranking. Single-row reordering within the same group keeps the existing **Undo reorder** behavior.
 - Drops into **No value** remove the corresponding note property. Numbers, booleans and list values keep their types. Note links retain target identity, aliases and heading/block subpaths when rebased for another folder. Equivalent links with different aliases or source-relative spelling share a custom group; reordering within that group preserves each note's existing alias.
 - Formula results and computed file properties cannot be assigned. A move within the same computed parent may still change writable child properties. Writable folder/name/path groups use the existing file-renaming checks. The native first grouping property is read through a small, isolated, read-only compatibility accessor because the public Bases API does not expose it; if it cannot be identified, cross-native-group moves are rejected without guessing.
 - Group moves and multi-row reorders are one **Undo edit** operation. All changes are preflighted, each note's frontmatter is updated once, and failures roll back earlier writes when no conflicting external edits prevent recovery. Changing a destination during a move or refreshing the table invalidates the move. Selection follows notes through refreshes and renames; notes hidden by collapse/filtering leave the selection. Filters may hide a moved note after its properties change.
 
-## Keeping empty groups available
+## Persistent group values
 
-A previously shown group stays visible with a **0** count when it becomes empty in this Base but another Markdown note in the vault still has the group's value. Empty headers remain expandable/collapsible and accept row drops, so files can be moved back. Supporting notes outside the Base are only used to verify values; they are never added to the table or changed by a drop.
+Group values encountered in this Base view are saved in a per-property catalogue. Previously shown group paths remain visible with a **0** count after their last note moves, changes or is deleted, even when no other vault note uses that value. Empty groups retain collapse controls and remain drop destinations. Unrelated values that never appeared in the view are not imported from the vault.
 
-Nested paths are verified as a complete combination on one vault note. A surviving parent value alone keeps the parent header, without inventing unseen child groups. Previously shown paths are remembered in this view and restored after reopening. Unrelated vault values that have never appeared in this view are not added. Headers disappear when their last supporting vault occurrence is changed or deleted; metadata changes trigger a debounced availability refresh.
+Open **Group → [property] — group values**. For note properties, **Add group** creates a new empty destination in either horizontal or vertical layout. Values use the property's type, so numeric and checkbox values retain their types, and links retain their native interactions. **Add empty group** creates/restores a destination for an unset property. Explicitly added nested values appear under the available parents; previously observed nested paths retain their original ancestors.
 
-Retention can verify note properties and supported file metadata (name, basename, path, folder, extension, size). Formula results outside the Base cannot be evaluated through the public API and are not retained without evidence. Changing grouping properties or native group visibility starts a new history, so deliberately hidden native groups are not brought back.
+Click a value's trash icon to remove it from this Base view. Notes and frontmatter are unchanged, but matching notes stop appearing in this view. Removal is remembered, preventing notes from automatically recreating the value on refresh or reopen. Adding the same value again clears that removal and restores its matching notes. **Show all** affects hidden columns only and does not restore explicitly removed values.
+
+Vertical groups still support visibility and ordering controls. Both orientations support adding note-property values, removing values and choosing colors. Adding grouping levels is labelled **Add group by**, separately from **Add group** for values. Removing or changing a grouping definition does not erase its saved per-property catalogue; full nested path history is rebuilt for the new definition. Existing saved group settings migrate when the view opens. Catalogue changes are view settings and never write note properties by themselves.
 
 ## Vertical groups with tables
 
@@ -212,7 +224,7 @@ Release over a row or group to perform the existing reorder/group move. Empty vi
 
 ## Group value colors
 
-Open **Group**, expand a property's **group values**, and click the color swatch beside a value to choose its color. The adjacent reset icon removes that value's color. Both horizontal and vertical grouping properties offer these controls; visibility, ordering and adding values remain available for vertical groups.
+Open **Group**, expand a property's **group values**, and click the color swatch beside a value to choose its color. The adjacent reset icon removes that value's color. Both horizontal and vertical grouping properties offer these controls; adding note-property values and removing values are available in both orientations; visibility and ordering controls remain available for vertical groups.
 
 Colors tint vertical column backgrounds, group headers and table headers. Horizontal group headers and their directly contained tables are tinted too. Selected rows use a stronger tint from their nearest colored group; nested values can override an outer group's color. Matching property/value groups share colors across horizontal sections and nested scopes, including empty columns and collapsed rails. Aliases pointing to the same linked note use the same color identity.
 

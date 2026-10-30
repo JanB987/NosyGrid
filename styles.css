@@ -161,3 +161,6 @@
 
 .manual-order-aligned-board > .manual-order-board-column { grid-row:1; }
 .manual-order-list-item-input.is-measuring-list-item { height:auto!important; }
+
+.manual-order-remove-group-value { flex: none; width: 24px; height: 24px; padding: 3px; background: transparent; box-shadow: none; }
+.manual-order-remove-group-value svg { width: 14px; height: 14px; }
