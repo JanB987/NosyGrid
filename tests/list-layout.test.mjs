@@ -32,6 +32,31 @@ test('real browser: vertical lists, fixed rows, expansion persistence and editin
       window.rowSnapshot=()=>[...document.querySelectorAll('tbody tr')].map(tr=>{const r=tr.getBoundingClientRect();return {path:tr.dataset.rowPath,height:r.height,y:r.y};});
       window.openView();
     });
+    for(const width of [1100,360]) {
+      await page.locator('#view').evaluate((el,width)=>{el.style.width=`${width}px`;},width);
+      const geometry=()=>page.evaluate(()=>{
+        const root=document.querySelector('.manual-order-bases'),bar=root.querySelector('.manual-order-toolbar'),table=root.querySelector('table');
+        return {toolbarHeight:bar.getBoundingClientRect().height,tableTop:table.getBoundingClientRect().top-root.getBoundingClientRect().top,scrollTop:root.scrollTop,scrollLeft:root.scrollLeft};
+      });
+      const baseline=await geometry(),handles=page.locator('tbody .manual-order-handle');
+      assert.equal(await page.locator('.manual-order-row-selection-status').count(),0);
+      await handles.first().click();
+      assert.equal(await handles.first().getAttribute('aria-pressed'),'true');
+      assert.equal(await handles.first().evaluate(el=>el.closest('tr').getAttribute('aria-selected')),'true');
+      assert.equal(await page.locator('tr.manual-order-row-selected').count(),1);
+      assert.deepEqual(await geometry(),baseline,`single selection preserves layout and scroll at ${width}px`);
+      await handles.nth(2).click({modifiers:['Control']});
+      assert.equal(await page.locator('tr.manual-order-row-selected').count(),2);
+      assert.equal(await handles.nth(2).getAttribute('aria-pressed'),'true');
+      assert.deepEqual(await geometry(),baseline,`multiple selection preserves layout and scroll at ${width}px`);
+      await handles.first().click({modifiers:['Control']});await handles.nth(2).click({modifiers:['Control']});
+      assert.equal(await page.locator('tr.manual-order-row-selected').count(),0);
+      assert.equal(await handles.first().getAttribute('aria-pressed'),'false');
+      assert.equal(await handles.nth(2).evaluate(el=>el.closest('tr').getAttribute('aria-selected')),'false');
+      assert.deepEqual(await geometry(),baseline,`clearing selection preserves layout and scroll at ${width}px`);
+      assert.doesNotMatch(await page.locator('.manual-order-toolbar').textContent(),/\b\d+ rows? selected\b/);
+    }
+    await page.locator('#view').evaluate(el=>{el.style.width='';});
     const target=page.locator('td[data-path="Note 1.md"][data-property="note.items"]');
     const control=target.locator('.manual-order-list-toggle');
     await control.waitFor({state:'visible'});

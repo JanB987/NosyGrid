@@ -12,7 +12,7 @@ Organize notes in a grid, drag rows between groups, edit their properties in pla
 
 - **Manual row ordering.** Drag a handle to reorder notes. Choose note-property ranks or independent Base-view ranks. Fractional allocation preserves unchanged ranks whenever there is space.
 - **Inline editing.** Edit text, numbers, dates, checkboxes, lists and structured values. Rename files from the file-name cell. Ordinary edits update changed cells without rebuilding the table.
-- **Links and lists.** Complete `[[wiki links]]` as you type, use aliases and native link interactions, drag links into other cells, and add or remove list items.
+- **Links and lists.** Complete `[[wiki links]]` as you type, use aliases and native link interactions, drag links into other cells, drag file names or selected row handles to other destinations, and add or remove list items.
 - **Selection and clipboard.** Drag across cells to select a range; copy complete values or paste into selected cells. Ctrl/Cmd-click row handles to toggle rows, and Shift-click to select a row range.
 - **Nested grouping.** Choose horizontal or vertical layout per grouping level. Matching vertical columns stay aligned across horizontal sections, even when empty.
 - **Move notes between groups.** Drag one row or a selected block into another group to update its properties. A floating preview follows the cursor; shadow placeholders mark the source positions. Cancelled or invalid drops restore the rows.
@@ -86,9 +86,11 @@ Click a cell to edit it. Enter saves; Tab saves and advances; Escape cancels an 
 
 ![NosyGrid table with an inline list editor and wiki links](docs/images/editing.png)
 
-Type `[[` to search for links. Click rendered links normally, use Ctrl/Cmd-click or middle-click for another pane, or hover for previews when Obsidian's Page preview behavior allows it. Drag links between compatible text/list cells to append them.
+Type `[[` to search for links. Click rendered links normally, use Ctrl/Cmd-click or middle-click for another pane, or hover for previews when Obsidian's Page preview behavior allows it. Drag links between compatible text/list cells to append them. Drag a file name to insert its note link elsewhere; if its row is selected, the visible selected rows travel together. Row handles also offer the selected notes to external drop targets while retaining their normal move behavior inside NosyGrid. Native Markdown and property-field drops depend on Obsidian's drag support and have not yet been verified for this version.
 
 Drag across cells to select a range. **Ctrl/Cmd+C** copies full values, including hidden list items. **Ctrl/Cmd+V** replaces selected cells; a single list cell can receive several clipboard lines as list items.
+
+Select row handles and press **Ctrl/Cmd+C**, or right-click a selected handle and choose **Copy link** / **Copy links**, to copy full vault-path wiki links in visible order. Highlighted editor text takes precedence; selected cells still copy their ordinary values. Paste normally into an editor. Recognized Text properties receive all links on one line; recognized List add-item fields receive one entry per copied note, preserving existing items. Native property compatibility needs testing in your Obsidian version; see [usage notes](docs/usage.md#copying-selected-rows-as-links).
 
 ## Groups, columns and dragging
 
@@ -130,7 +132,7 @@ Formula and computed file properties are read-only. A layout rebuild is still ne
 - The test suite covers editing, selection, clipboard, links, row/group moves, cancellation, persistence, colors, summaries and browser layouts.
 - A tag matching `manifest.json` (for example, `0.26.1`, without `v`) triggers the release workflow.
 
-See [detailed usage notes](docs/usage.md), [release notes](docs/releases/0.29.0.md) and [Obsidian's plugin submission guide](https://docs.obsidian.md/Plugins/Releasing/Submit%20your%20plugin).
+See [detailed usage notes](docs/usage.md), [release notes](docs/releases/0.30.0.md) and [Obsidian's plugin submission guide](https://docs.obsidian.md/Plugins/Releasing/Submit%20your%20plugin).
 
 ## Feedback and license
 

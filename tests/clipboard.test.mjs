@@ -3,7 +3,14 @@ import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 import {pathToFileURL} from 'node:url';
 await build({entryPoints:['src/clipboard.ts'],bundle:true,platform:'node',format:'esm',outfile:'test-build/clipboard.mjs',external:['yaml'],alias:{obsidian:`${process.cwd()}/tests/obsidian-mock.mjs`}});
-const {parseClipboard,mapClipboard,parsePastedValue,serializeClipboard}=await import(pathToFileURL(`${process.cwd()}/test-build/clipboard.mjs`));
+const {parseClipboard,mapClipboard,parsePastedValue,serializeClipboard,rowLinksForClipboard}=await import(pathToFileURL(`${process.cwd()}/test-build/clipboard.mjs`));
+
+test('row links identify duplicate names in visible order and deduplicate repeated paths',()=>{
+  const paths=['A/Shared (draft).md','B/Shared (draft).md','A/Shared (draft).md'];
+  assert.equal(rowLinksForClipboard(paths,new Set(paths)), '[[A/Shared (draft).md]]\n[[B/Shared (draft).md]]');
+  for(const path of ['A/Bad#name.md','A/Bad|name.md','A/Bad[name.md','A/Bad]name.md'])assert.throws(()=>rowLinksForClipboard([path],new Set([path])),/Cannot safely/);
+  assert.throws(()=>rowLinksForClipboard(['A.md'],new Set(['B.md'])),/No selected notes/);
+});
 
 test('copy serialization round-trips complete cells including multiline lists, links and separators',()=>{
   for(const rows of [[['[[Note|Alias]]\nsecond\nthird']], [['001','false','0'],['tab\tinside','said "hello"','']], [['',''],['','']], [['first'],['']]]) {

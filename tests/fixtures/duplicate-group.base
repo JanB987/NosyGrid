@@ -1,0 +1,35 @@
+filters:
+  and:
+    - nosygrid_migration_fixture == true
+views:
+  - type: manual-order-table
+    name: Duplicate group migration fixture
+    order:
+      - file.name
+      - status
+    orderProperty: priority
+    groupBy:
+      property: status
+      direction: ASC
+    manualNativeGroupLayout: vertical
+    manualKnownGroups:
+      signature: '[["note.status","ASC",null],[]]'
+      groups:
+        - key: '["native","List","[[Example Status]]"]'
+          label: '[[Example Status]]'
+          nativeId: '["native","List","[[Example Status]]"]'
+          bindings:
+            - property: note.status
+              value:
+                exists: true
+                value: '[[Example Status]]'
+              sourcePath: PRJT - Reordering Bases/Duplicate Group Fixture/Fixture One.md
+        - key: '["native","Link","[[Example Status]]"]'
+          label: '[[Example Status]]'
+          nativeId: '["native","Link","[[Example Status]]"]'
+          bindings:
+            - property: note.status
+              value:
+                exists: true
+                value: '[[Example Status]]'
+              sourcePath: PRJT - Reordering Bases/Duplicate Group Fixture/Fixture Two.md

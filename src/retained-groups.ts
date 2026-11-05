@@ -10,7 +10,7 @@ interface RememberedGroup {key:string;parent?:string;label:string;property?:RowG
 interface GroupMemory {signature:string;groups:RememberedGroup[]}
 
 /** Remember previously seen group paths even after their last note changes or disappears. */
-export function retainGroups<T>(live:DisplayGroup<T>[],saved:unknown,signature:string,find:(bindings:GroupBinding[])=>GroupBinding[]|undefined) {
+export function retainGroups<T>(live:DisplayGroup<T>[],saved:unknown,signature:string,find:(bindings:GroupBinding[])=>GroupBinding[]|undefined,identity?:(group:DisplayGroup<T>)=>string|undefined,rowKey?:(row:T)=>string) {
   const memory=saved as GroupMemory|undefined;
   const previous=memory?.signature===signature&&Array.isArray(memory.groups)?memory.groups.filter(record=>record&&typeof record.key==='string'&&typeof record.label==='string'&&(record.parent===undefined||typeof record.parent==='string')&&record.parent!==record.key):[];
   const nodes=new Map<string,DisplayGroup<T>>(),records=new Map<string,RememberedGroup>();
@@ -41,8 +41,46 @@ export function retainGroups<T>(live:DisplayGroup<T>[],saved:unknown,signature:s
     const index=following?siblings.findIndex(group=>group.key===following.key):siblings.length;
     siblings.splice(index,0,node);
   }
+  const migratedKeys=new Map<string,string>();
+  // Work within sibling sets so equal values under different parents remain distinct.
+  const rewritePrefix=(key:string,from:string,to:string):string=>{
+    try {
+      const parts:unknown=JSON.parse(key),old:unknown=JSON.parse(from),next:unknown=JSON.parse(to);
+      if(!Array.isArray(parts)||!Array.isArray(old)||!Array.isArray(next)||old.length>parts.length||!old.every((part,index)=>part===parts[index]))return key;
+      return JSON.stringify([...(next as unknown[]),...(parts as unknown[]).slice(old.length)]);
+    } catch {return key;}
+  };
+  const reparent=(group:DisplayGroup<T>,oldParent:string,newParent:string,oldNative?:string,newNative?:string)=>{
+    const old=group.key;group.key=rewritePrefix(old,oldParent,newParent);
+    if(old!==group.key){migratedKeys.set(old,group.key);if(liveKeys.has(old))liveKeys.add(group.key);}
+    if(oldNative&&group.nativeId===oldNative)group.nativeId=newNative;
+    for(const child of group.children)reparent(child,oldParent,newParent,oldNative,newNative);
+  };
+  const normalize=(siblings:DisplayGroup<T>[])=>{
+    if(identity) {
+      const buckets=new Map<string,DisplayGroup<T>[]>();
+      for(const group of siblings){const id=identity(group);if(id!==undefined){const bucket=buckets.get(id)??[];bucket.push(group);buckets.set(id,bucket);}}
+      for(const bucket of buckets.values()) {
+        if(bucket.length<2)continue;
+        const winner=bucket.find(group=>liveKeys.has(group.key))??bucket[0];
+        for(const other of bucket) {
+          if(other===winner)continue;
+          const old=other.key;migratedKeys.set(old,winner.key);
+          const seen=new Set(winner.rows.map(row=>rowKey?rowKey(row):row));
+          for(const row of other.rows){const key=rowKey?rowKey(row):row;if(!seen.has(key)){winner.rows.push(row);seen.add(key);}}
+          for(const child of other.children){reparent(child,old,winner.key,other.nativeId,winner.nativeId);winner.children.push(child);}
+          siblings.splice(siblings.indexOf(other),1);
+        }
+      }
+    }
+    for(const group of siblings)normalize(group.children);
+  };
+  normalize(result);
   const ordered:RememberedGroup[]=[];
-  const collect=(group:DisplayGroup<T>)=>{const record=records.get(group.key);if(record)ordered.push(record);for(const child of group.children)collect(child);};
+  const collect=(group:DisplayGroup<T>,parent?:string)=>{
+    if(!group.unknownNative&&group.bindings.length)ordered.push({key:group.key,parent,label:group.label,property:group.property,nativeId:group.nativeId,bindings:group.bindings.map(({property,value,sourcePath})=>({property,value,sourcePath}))});
+    for(const child of group.children)collect(child,group.key);
+  };
   for(const group of result)collect(group);
-  return {groups:result,memory:ordered.length?{signature,groups:ordered}:null};
+  return {groups:result,memory:ordered.length?{signature,groups:ordered}:null,migratedKeys};
 }

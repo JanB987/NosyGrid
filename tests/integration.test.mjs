@@ -4,6 +4,7 @@ import {build} from 'esbuild';
 import {JSDOM} from 'jsdom';
 import {parse,stringify} from 'yaml';
 import {pathToFileURL} from 'node:url';
+import {readFileSync} from 'node:fs';
 await build({entryPoints:['src/main.ts'],bundle:true,platform:'node',format:'esm',outfile:'test-build/plugin.mjs',external:['yaml'],alias:{obsidian:`${process.cwd()}/tests/obsidian-mock.mjs`}});
 const {default:Plugin,ManualOrderView}=await import(pathToFileURL(`${process.cwd()}/test-build/plugin.mjs`));
 
@@ -715,6 +716,37 @@ test('note links copy between every Text/List combination, retaining the source 
     await ctx.plugin.undoEdit();assert.deepEqual(ctx.records.get('Note 2.md').fm.target,targetType==='list'?['existing item']:'existing text');
   }
 });
+test('selected file names drop links in visible order without changing source ranks',async()=>{
+  for(const type of ['text','list']) {
+    const ctx=linkDragFixture('text',type),before=[1,3].map(i=>structuredClone(ctx.records.get(`Note ${i}.md`).fm));
+    rowGrip(ctx,'Note 3.md').click();rowGrip(ctx,'Note 1.md').dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,ctrlKey:true}));
+    const data=dataTransfer(),link=cell(ctx,'Note 3.md','file.name').querySelector('a');
+    link.dispatchEvent(new ctx.dom.window.MouseEvent('pointerdown',{bubbles:true,button:0}));
+    dragEvent(ctx,link,'dragstart',data);
+    assert.deepEqual(JSON.parse(data.getData('application/x-nosygrid-note-links')).map(item=>item.resolvedPath),['Note 1.md','Note 3.md']);
+    dragEvent(ctx,cell(ctx,'Note 2.md','note.target'),'drop',data);await settle(ctx);
+    assert.deepEqual(ctx.records.get('Note 2.md').fm.target,type==='list'?['existing item','[[Note 1]]','[[Note 3]]']:'existing text [[Note 1]] [[Note 3]]');
+    assert.deepEqual([1,3].map(i=>ctx.records.get(`Note ${i}.md`).fm),before);assert.equal(ctx.writes,1);
+  }
+});
+test('native file drags coexist with internal row moves and copy selected file names',async()=>{
+  const ctx=linkDragFixture(),calls=[];
+  ctx.app.dragManager={dragFile:(event,file)=>({files:[file]}),dragFiles:(event,files)=>({files}),onDragStart:(event,drag)=>{calls.push(drag.files.map(file=>file.path));event.dataTransfer.effectAllowed='all';}};
+  rowGrip(ctx,'Note 1.md').click();rowGrip(ctx,'Note 3.md').dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,ctrlKey:true}));
+  const linkData=dataTransfer();dragEvent(ctx,cell(ctx,'Note 1.md','file.name').querySelector('a'),'dragstart',linkData);
+  assert.deepEqual(calls[0],['Note 1.md','Note 3.md']);
+  const rowData=dataTransfer();dragEvent(ctx,rowGrip(ctx,'Note 1.md'),'dragstart',rowData);
+  assert.deepEqual(calls[1],['Note 1.md','Note 3.md']);
+  assert.deepEqual(JSON.parse(rowData.getData('application/x-manual-order-bases-rows')),['Note 1.md','Note 3.md']);
+  dragEvent(ctx,rowGrip(ctx,'Note 1.md'),'dragend',rowData);assert.equal(ctx.writes,0);
+});
+test('multi-note drop saves an active draft before appending links',async()=>{
+  const ctx=linkDragFixture();rowGrip(ctx,'Note 1.md').click();rowGrip(ctx,'Note 3.md').dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,ctrlKey:true}));
+  const data=dataTransfer();dragEvent(ctx,cell(ctx,'Note 1.md','file.name').querySelector('a'),'dragstart',data);
+  await ctx.view.editCell(ctx.entries[1],'note.target');editorInput(ctx).value='draft';
+  dragEvent(ctx,cell(ctx,'Note 2.md','note.target'),'drop',data);await settle(ctx);
+  assert.equal(ctx.records.get('Note 2.md').fm.target,'draft [[Note 1]] [[Note 3]]');
+});
 test('dropping a link into an active Text editor preserves and saves its draft',async()=>{
   const ctx=linkDragFixture();await ctx.view.editCell(ctx.entries[1],'note.target');editorInput(ctx).value='pending text';
   const data=dataTransfer();dragEvent(ctx,cell(ctx,'Note 1.md','note.source').querySelector('.internal-link'),'dragstart',data);
@@ -785,6 +817,56 @@ function copyCells(ctx,target=ctx.dom.window.document.activeElement) {
   Object.defineProperty(event,'clipboardData',{value:{setData:(type,value)=>data.set(type,value)}});
   target.dispatchEvent(event);return {event,text:data.get('text/plain')};
 }
+
+test('row copy uses visible group order, not selection order, without writes',()=>{
+  const ctx=groupedMoveFixture(),before=structuredClone(ctx.options);
+  rowGrip(ctx,'Note 4.md').click();rowGrip(ctx,'Note 1.md').dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,ctrlKey:true}));
+  let result=copyCells(ctx,rowGrip(ctx,'Note 1.md'));
+  assert.equal(result.text,'[[Note 1.md]]\n[[Note 4.md]]');assert.equal(result.event.defaultPrevented,true);
+  rowGrip(ctx,'Note 2.md').click();result=copyCells(ctx,rowGrip(ctx,'Note 2.md'));assert.equal(result.text,'[[Note 2.md]]');
+  assert.equal(ctx.writes,0);assert.deepEqual(ctx.options,before);
+});
+
+test('row context menu copies selected block and reports clipboard failures',async()=>{
+  const ctx=groupedMoveFixture(),doc=ctx.dom.window.document,results=[];
+  Object.defineProperty(ctx.dom.window.navigator,'clipboard',{value:{writeText:async text=>{results.push(text);}}});
+  rowGrip(ctx,'Note 4.md').click();rowGrip(ctx,'Note 1.md').dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,ctrlKey:true}));
+  rowGrip(ctx,'Note 4.md').dispatchEvent(new ctx.dom.window.MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2}));
+  assert.equal(ctx.view.selectedRows.size,2);
+  [...doc.querySelectorAll('.mock-menu button')].find(button=>button.textContent==='Copy links').click();await settle(ctx);
+  assert.deepEqual(results,['[[Note 1.md]]\n[[Note 4.md]]']);
+  ctx.dom.window.navigator.clipboard.writeText=async()=>{throw new Error('denied');};
+  rowGrip(ctx,'Note 2.md').dispatchEvent(new ctx.dom.window.MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2}));
+  assert.deepEqual([...ctx.view.selectedRows],['Note 2.md']);
+  [...doc.querySelectorAll('.mock-menu button')].find(button=>button.textContent==='Copy link').click();await settle(ctx);
+  assert.match(globalThis.notices.at(-1),/Could not copy links: denied/);assert.equal(ctx.writes,0);
+});
+
+test('keyboard and menu row copies feed only the recognized simulated Text widget',async()=>{
+  for(const method of ['keyboard','menu']) {
+    const ctx=setup(),doc=ctx.dom.window.document,output=[];
+    Object.defineProperty(ctx.dom.window.navigator,'clipboard',{value:{writeText:async text=>{output.push(text);}}});
+    rowGrip(ctx,'Note 1.md').click();rowGrip(ctx,'Note 3.md').dispatchEvent(new ctx.dom.window.MouseEvent('click',{bubbles:true,ctrlKey:true}));
+    let text;
+    if(method==='keyboard')text=copyCells(ctx,rowGrip(ctx,'Note 1.md')).text;
+    else {rowGrip(ctx,'Note 1.md').dispatchEvent(new ctx.dom.window.MouseEvent('contextmenu',{bubbles:true,cancelable:true}));[...doc.querySelectorAll('.mock-menu button')].find(button=>button.textContent==='Copy links').click();await settle(ctx);text=output[0];}
+    assert.equal(text,'[[Note 1.md]]\n[[Note 3.md]]');
+    const property=doc.createElement('div');property.className='metadata-property';property.dataset.propertyKey='example';
+    property.innerHTML='<div class="metadata-property-value" data-property-type="text"><div class="metadata-input-longtext" contenteditable="true">prefix suffix</div></div>';doc.body.append(property);
+    const target=property.querySelector('[contenteditable]'),selection=doc.getSelection(),range=doc.createRange();range.setStart(target.firstChild,6);range.collapse(true);selection.removeAllRanges();selection.addRange(range);
+    let draft='',saved='';target.addEventListener('input',()=>{draft=target.textContent;});target.addEventListener('blur',()=>{saved=draft;});
+    const event=new ctx.dom.window.Event('paste',{bubbles:true,cancelable:true});Object.defineProperty(event,'clipboardData',{value:{getData:()=>text}});target.dispatchEvent(event);target.dispatchEvent(new ctx.dom.window.Event('blur'));
+    assert.equal(event.defaultPrevented,true);assert.equal(saved,'prefix [[Note 1.md]] [[Note 3.md]] suffix');assert.equal(ctx.writes,0);
+  }
+});
+
+test('clipboard failure is reported and highlighted editor text keeps native precedence',async()=>{
+  const ctx=setup([1,2,3],['file.name','note.keep']);rowGrip(ctx,'Note 1.md').click();
+  const event=new ctx.dom.window.Event('copy',{bubbles:true,cancelable:true});Object.defineProperty(event,'clipboardData',{value:{setData(){throw new Error('denied');}}});
+  rowGrip(ctx,'Note 1.md').dispatchEvent(event);assert.equal(event.defaultPrevented,true);assert.match(globalThis.notices.at(-1),/Could not copy:.*denied/);
+  cell(ctx,'Note 1.md','note.keep').click();await settle(ctx);const input=editorInput(ctx);input.setSelectionRange(0,3);
+  ctx.view.selectedRows.add('Note 2.md');assert.equal(copyCells(ctx,input).event.defaultPrevented,false);assert.equal(ctx.writes,0);ctx.view.editor.cancel();
+});
 
 test('copy includes every hidden list item and original wiki syntax without saving or expanding rows',()=>{
   const ctx=setup([1,2,3],['note.items']);ctx.plugin.propertyTypes.set('items','list');
@@ -943,6 +1025,7 @@ test('list item shift ranges, toggles, keyboard selection and copy leave values 
   cell(ctx,'Note 1.md','note.items').click();await settle(ctx);const inputs=listInputs(ctx),editor=ctx.view.editor;
   const down=(target,options={})=>target.dispatchEvent(new ctx.dom.window.MouseEvent('pointerdown',{bubbles:true,cancelable:true,button:0,...options}));
   down(inputs[0]);down(inputs[2],{shiftKey:true});assert.equal(editor.copyText(),'one\n[[Note 2]]\nthree');
+  inputs[0].setSelectionRange(0,2);assert.equal(copyCells(ctx,inputs[0]).event.defaultPrevented,false);
   const bullets=[...ctx.dom.window.document.querySelectorAll('.manual-order-list-edit-bullet')];down(bullets[1],{ctrlKey:true});assert.equal(editor.copyText(),'one\nthree');
   inputs[1].dispatchEvent(new ctx.dom.window.KeyboardEvent('keydown',{key:'a',ctrlKey:true,bubbles:true,cancelable:true}));assert.equal(editor.copyText(),'one\n[[Note 2]]\nthree\nfour');
   inputs[1].dispatchEvent(new ctx.dom.window.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));assert.equal(editor.hasItemSelection(),false);assert.equal(ctx.view.editor,editor);assert.equal(ctx.writes,0);editor.cancel();
@@ -1302,6 +1385,43 @@ test('group history resets when grouping properties change',()=>{
   assert.equal(groupHeader(ctx,'note.team: A'),undefined);assert.equal(ctx.options.manualKnownGroups.groups.some(group=>group.property==='note.team'),false);
 });
 
+test('native duplicate migration persists across reopen and preserves per-value settings',()=>{
+  const fixture=parse(readFileSync(process.env.NOSYGRID_MIGRATION_FIXTURE??'tests/fixtures/duplicate-group.base','utf8')).views[0];
+  const ctx=setup([1,2],['file.name']),old='["native","List","[[Example Status]]"]',current='["native","Link","[[Example Status]]"]';
+  class NativeLink {static type='Link';toString(){return '[[Example Status]]';}renderTo(el){el.textContent='Example Status';}}
+  Object.assign(ctx.options,fixture);ctx.view.config.groupBy={property:'note.status',direction:'ASC'};
+  ctx.records.get('Note 1.md').fm.status='[[Example Status]]';ctx.records.get('Note 2.md').fm.status='[[Example Status]]';
+  const valueId='["group-width","note.status","string:[[Example Status]]"]';
+  ctx.options.manualCollapsedGroups=[old];ctx.options.manualGroupWidths={[old]:480,[valueId]:520};ctx.options.manualGroupColors={[valueId]:'#123456'};
+  ctx.options.manualGroupValues={'note.status':{hidden:[],removed:[],added:[],known:[],order:[valueId]}};
+  ctx.options.manualVerticalGroupOrder={'["board","note.status",[]]':[valueId]};
+  ctx.view.data.groupedData=[{entries:ctx.entries,key:new NativeLink(),hasKey:()=>true}];ctx.view.onDataUpdated();
+  assert.equal(ctx.options.manualKnownGroups.groups.length,1);assert.equal(ctx.options.manualKnownGroups.groups[0].key,current);
+  assert.deepEqual(ctx.options.manualCollapsedGroups,[current]);assert.equal(ctx.options.manualGroupWidths[valueId],520);assert.equal(ctx.options.manualGroupColors[valueId],'#123456');
+  assert.deepEqual(ctx.options.manualVerticalGroupOrder['["board","note.status",[]]'],[valueId]);
+  assert.equal(ctx.dom.window.document.querySelectorAll('.manual-order-board-column').length,1);assert.equal(ctx.writes,0);
+  const saved=structuredClone(ctx.options.manualKnownGroups);ctx.view.onDataUpdated();assert.deepEqual(ctx.options.manualKnownGroups,saved);
+  ctx.options.manualGroupValues['note.status'].hidden=[valueId];ctx.view.onDataUpdated();assert.equal(ctx.dom.window.document.querySelectorAll('.manual-order-board-column').length,0);
+  ctx.options.manualGroupValues['note.status'].hidden=[];ctx.options.manualGroupValues['note.status'].removed=[valueId];ctx.view.onDataUpdated();assert.equal(ctx.dom.window.document.querySelectorAll('.manual-order-board-column').length,0);
+});
+test('failed collapsed-state migration leaves the old catalogue available for retry',()=>{
+  const fixture=parse(readFileSync('tests/fixtures/duplicate-group.base','utf8')).views[0],ctx=setup([1],['file.name']);
+  const old='["native","List","[[Example Status]]"]';class NativeLink {static type='Link';toString(){return '[[Example Status]]';}renderTo(el){el.textContent='Example Status';}}
+  Object.assign(ctx.options,fixture);ctx.options.manualCollapsedGroups=[old];ctx.view.config.groupBy={property:'note.status',direction:'ASC'};
+  ctx.records.get('Note 1.md').fm.status='[[Example Status]]';ctx.view.data.groupedData=[{entries:ctx.entries,key:new NativeLink(),hasKey:()=>true}];
+  const save=ctx.view.config.set;ctx.view.config.set=(key,value)=>{if(key==='manualCollapsedGroups')throw Error('save failed');save(key,value);};
+  ctx.view.onDataUpdated();assert.equal(ctx.options.manualKnownGroups.groups.length,2);assert.match(globalThis.notices.at(-1),/migrate collapsed groups/);
+  ctx.view.config.set=save;ctx.view.onDataUpdated();assert.equal(ctx.options.manualKnownGroups.groups.length,1);assert.equal(ctx.options.manualCollapsedGroups.length,1);assert.notEqual(ctx.options.manualCollapsedGroups[0],old);
+});
+test('native retained aliases resolve to the live group through the destination path',()=>{
+  const ctx=setup([1,2,3],['file.name']),old='["native","List","[[Folder/Note 3|Old alias]]"]';
+  class NativeLink {static type='Link';toString(){return '[[Note 3|New alias]]';}renderTo(el){el.textContent='New alias';}}
+  ctx.records.get('Note 1.md').fm.status='[[Note 3|New alias]]';ctx.view.config.groupBy={property:'note.status',direction:'ASC'};ctx.options.manualNativeGroupLayout='vertical';
+  ctx.app.metadataCache.getFirstLinkpathDest=target=>target==='Folder/Note 3'||target==='Note 3'?ctx.entries[2].file:null;
+  ctx.options.manualKnownGroups={signature:'[["note.status","ASC",null],[]]',groups:[{key:old,label:'[[Folder/Note 3|Old alias]]',nativeId:old,bindings:[{property:'note.status',sourcePath:'Folder/Note 1.md',value:{exists:true,value:'[[Folder/Note 3|Old alias]]'}}]}]};
+  ctx.view.data.groupedData=[{entries:[ctx.entries[0]],key:new NativeLink(),hasKey:()=>true}];ctx.view.onDataUpdated();
+  assert.equal(ctx.options.manualKnownGroups.groups.length,1);assert.equal(ctx.dom.window.document.querySelectorAll('.manual-order-board-column').length,1);assert.equal(ctx.writes,0);
+});
 test('native empty group retention uses its original typed key during metadata refresh and accepts moves back',async()=>{
   const ctx=groupedMoveFixture();ctx.records.get('Note 4.md').fm.team='A';filterToFirst(ctx,3);ctx.options.manualGroups=[];ctx.view.config.groupBy={property:'note.team',direction:'ASC'};
   class NativeString {static type='string';constructor(value){this.value=value;}toString(){return this.value;}renderTo(el){el.textContent=this.value;}}
@@ -1723,4 +1843,15 @@ test('No value groups persist as empty values and can be removed and explicitly 
   valueMenu(ctx,'note.priority').querySelector('[aria-label="Remove group No value"]').click();await settle(ctx);assert.equal(groupHeader(ctx,'note.priority: No value'),undefined);
   valueMenu(ctx,'note.priority').querySelector('[aria-label="Add empty note.priority group"]').click();await settle(ctx);assert.ok(groupHeader(ctx,'note.priority: No value'));assert.equal(ctx.writes,0);
   assert.equal(ctx.options.manualGroupValues['note.priority'].known.some(value=>value==='No value'),false);
+});
+
+test('property paste survives closing the source view and cleans up on plugin unload',()=>{
+  const ctx=setup(),doc=ctx.dom.window.document,property=doc.createElement('div');property.className='metadata-property';property.dataset.propertyKey='example';
+  const value=doc.createElement('div');value.className='metadata-property-value';value.dataset.propertyType='text';property.append(value);
+  const input=doc.createElement('div');input.className='metadata-input-longtext';input.setAttribute('contenteditable','true');value.append(input);doc.body.append(property);
+  const text='[[Note 1.md]]\n[[Note 2.md]]';ctx.plugin.propertyPaste.remember(text);ctx.view.unload();
+  const range=doc.createRange();range.selectNodeContents(input);range.collapse(false);doc.getSelection().removeAllRanges();doc.getSelection().addRange(range);
+  const event=new ctx.dom.window.Event('paste',{bubbles:true,cancelable:true});Object.defineProperty(event,'clipboardData',{value:{getData:()=>text}});input.dispatchEvent(event);
+  assert.equal(event.defaultPrevented,true);assert.equal(input.textContent,'[[Note 1.md]] [[Note 2.md]]');
+  ctx.plugin.onunload();const next=new ctx.dom.window.Event('paste',{bubbles:true,cancelable:true});Object.defineProperty(next,'clipboardData',{value:{getData:()=>text}});input.dispatchEvent(next);assert.equal(next.defaultPrevented,false);
 });

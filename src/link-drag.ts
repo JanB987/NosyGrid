@@ -1,4 +1,4 @@
-import {parseLinktext,type App} from 'obsidian';
+import {parseLinktext,type App,type TFile} from 'obsidian';
 import {isRecord} from './validation';
 import {splitWikilinks} from './link-syntax';
 import {type CellValue} from './editing';
@@ -82,4 +82,47 @@ export function bindSelectedLinkDrag(input:HTMLInputElement|HTMLTextAreaElement,
   const end=()=>clearLinkDropTargets(input.ownerDocument);
   input.addEventListener('dragstart',start);input.addEventListener('dragend',end);
   return ()=>{input.removeEventListener('dragstart',start);input.removeEventListener('dragend',end);};
+}
+
+
+// The drag manager is not in the public SDK. Use it only when the installed
+// Obsidian exposes the complete file-drag interface; the text fallback still works.
+interface NativeFileDragManager {
+  dragFile(event:DragEvent,file:TFile):unknown;
+  dragFiles(event:DragEvent,files:TFile[]):unknown;
+  onDragStart(event:DragEvent,drag:unknown):void;
+}
+export function startNativeFileDrag(app:App,event:DragEvent,files:TFile[]):boolean {
+  const candidate:unknown=(app as unknown as {dragManager?:unknown}).dragManager;
+  if(!event.dataTransfer || !files.length || !isRecord(candidate) || typeof candidate.dragFile!=='function' ||
+    typeof candidate.dragFiles!=='function' || typeof candidate.onDragStart!=='function')return false;
+  const manager=candidate as unknown as NativeFileDragManager;
+  const drag=files.length===1?manager.dragFile(event,files[0]):manager.dragFiles(event,files);
+  if(!drag)return false;
+  manager.onDragStart(event,drag);return true;
+}
+
+export const NOTE_LINKS_DRAG_TYPE='application/x-nosygrid-note-links';
+export function writeNoteLinksDrag(data:DataTransfer,files:TFile[]):void {
+  const payloads=files.map(file=>({version:1 as const,sourcePath:file.path,link:`[[${file.path}]]`,resolvedPath:file.path}));
+  data.setData(NOTE_LINKS_DRAG_TYPE,JSON.stringify(payloads));
+  data.setData('text/plain',payloads.map(payload=>payload.link).join('\n'));
+  data.effectAllowed='copy';
+}
+export function hasNoteLinksDrag(data:DataTransfer|null):boolean {
+  return !!data && Array.from(data.types??[]).includes(NOTE_LINKS_DRAG_TYPE);
+}
+export function readNoteLinksDrag(data:DataTransfer|null):DraggedLink[]|undefined {
+  if(!hasNoteLinksDrag(data))return;
+  try {
+    const raw=data!.getData(NOTE_LINKS_DRAG_TYPE);if(raw.length>65536)return;
+    const values:unknown=JSON.parse(raw);if(!Array.isArray(values)||!values.length||values.length>1000)return;
+    const result:DraggedLink[]=[];
+    for(const value of values as unknown[]) {
+      if(!isRecord(value)||value.version!==1||typeof value.sourcePath!=='string'||/[\r\n\0]/.test(value.sourcePath)||
+        typeof value.link!=='string'||!singleLink(value.link)||typeof value.resolvedPath!=='string'||value.resolvedPath!==value.sourcePath)return;
+      result.push({version:1,sourcePath:value.sourcePath,link:value.link,resolvedPath:value.resolvedPath});
+    }
+    return result;
+  } catch {return;}
 }

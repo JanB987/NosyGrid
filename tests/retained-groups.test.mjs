@@ -28,3 +28,29 @@ test('computed values are retained while unidentified native paths remain unsupp
   const unknown={...node('unknown'),unknownNative:true};
   assert.equal(retainGroups([computed,unknown],null,'schema',bindings=>bindings).memory.groups.length,1);
 });
+
+
+const semantic=group=>JSON.stringify([group.property??group.bindings.at(-1)?.property,group.bindings.at(-1)?.value.value]);
+const rowKey=row=>row.path;
+const group=(key,value,rows=[],children=[],property='note.status')=>({key,label:String(value),property,bindings:[{property,sourcePath:'Note.md',value:{exists:true,value}}],rows,children,nativeId:key});
+test('migrates a retained native List key to the live Link key without losing rows or empty values',()=>{
+  const old='["native","List","[[Example]]"]',current='["native","Link","[[Example]]"]';
+  const saved=retainGroups([group(old,'[[Example]]'),group('empty','[[Another]]')],null,'schema',()=>undefined).memory;
+  const live=group(current,'[[Example]]',[{path:'A.md'}]);
+  const result=retainGroups([live],saved,'schema',x=>x,semantic,rowKey);
+  assert.deepEqual(result.groups.map(g=>g.key),[current,'empty']);assert.deepEqual(result.groups[0].rows.map(r=>r.path),['A.md']);
+  assert.equal(result.migratedKeys.get(old),current);assert.equal(result.memory.groups.some(g=>g.key===old),false);
+  const reopened=retainGroups([group(current,'[[Example]]',[{path:'A.md'}])],result.memory,'schema',x=>x,semantic,rowKey);
+  assert.deepEqual(reopened.memory,result.memory);assert.equal(reopened.migratedKeys.size,0);
+});
+test('merges live rows and nested children while preserving distinct ancestor scopes and list values',()=>{
+  const a='["native","List","x"]',b='["native","Link","x"]';
+  const left=group(a,'x',[{path:'A'},{path:'shared'}],[group(JSON.stringify([...JSON.parse(a),'note.child','string:c']),'c',[{path:'A'}],[],'note.child')]);
+  const right=group(b,'x',[{path:'B'},{path:'shared'}],[group(JSON.stringify([...JSON.parse(b),'note.child','string:c']),'c',[{path:'B'}],[],'note.child')]);
+  const merged=retainGroups([left,right],null,'schema',()=>undefined,semantic,rowKey);
+  assert.deepEqual(merged.groups[0].rows.map(r=>r.path),['A','shared','B']);
+  assert.deepEqual(merged.groups[0].children[0].rows.map(r=>r.path),['A','B']);
+  const parents=[group('p1','P1',[],[group('child1','same')]),group('p2','P2',[],[group('child2','same')]),group('list',['x','y']),group('singleton',['x']),group('scalar','x')];
+  const scoped=retainGroups(parents,null,'schema',()=>undefined,semantic,rowKey);
+  assert.equal(scoped.groups.length,5);assert.equal(scoped.groups[0].children.length,1);assert.equal(scoped.groups[1].children.length,1);
+});

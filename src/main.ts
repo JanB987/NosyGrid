@@ -6,9 +6,10 @@ import { CellEditor } from './cell-editor';
 import {renderPropertyLinks} from './link-render';
 import {RowLayout,ROW_HEIGHT_KEY} from './row-layout';
 import {ListCellEditor} from './list-cell-editor';
-import {appendLinkValue,clearLinkDropTargets,hasLinkDrag,linkForDestination,makeLinkDraggable,readLinkDrag,type DraggedLink} from './link-drag';
+import {appendLinkValue,clearLinkDropTargets,hasLinkDrag,linkForDestination,readLinkDrag,writeNoteLinksDrag,hasNoteLinksDrag,readNoteLinksDrag,startNativeFileDrag,type DraggedLink} from './link-drag';
 import {CellSelection} from './cell-selection';
-import {mapClipboard,parseClipboard,parsePastedValue,serializeClipboard} from './clipboard';
+import {mapClipboard,parseClipboard,parsePastedValue,serializeClipboard,rowLinksForClipboard} from './clipboard';
+import {PropertyPaste,nativeListTarget} from './property-paste';
 import {applyCellBatch,type CellChange,type CellEdit} from './batch-edit';
 import {GROUPS_KEY,COLLAPSED_KEY,NATIVE_LAYOUT_KEY,readGroupRules,groupRows,groupValueKey,type RowGroup} from './grouping';
 import {renderGroupMenu} from './group-menu';
@@ -37,6 +38,7 @@ interface Receipt { property: string; changes: Change[]; originals: Map<string, 
 type EditHistory=CellEdit|{changes:CellEdit[];order?:OrderEdit};
 
 export default class ManualOrderPlugin extends Plugin {
+  readonly propertyPaste=new PropertyPaste(message=>new Notice(message,8000),Date.now,target=>nativeListTarget(this.app,target));
   private availabilityTimer?:number;
   busy = false;
   batchWriting=false;
@@ -51,7 +53,14 @@ export default class ManualOrderPlugin extends Plugin {
   // Bridge the delay between a successful write and Bases' metadata refresh.
   pending = new Map<string, {property:string; rank:number|undefined}>();
 
+  private pasteDocuments=new Map<Document,()=>void>();
+  bindPropertyPaste(doc:Document) {if(!this.pasteDocuments.has(doc))this.pasteDocuments.set(doc,this.propertyPaste.bind(doc));}
+  onunload() {for(const unbind of this.pasteDocuments.values())unbind();this.pasteDocuments.clear();this.propertyPaste.clear();}
   async onload() {
+    this.bindPropertyPaste(document);
+    this.app.workspace.iterateAllLeaves(leaf=>this.bindPropertyPaste(leaf.view.containerEl.ownerDocument));
+    this.registerEvent(this.app.workspace.on('window-open',(_workspaceWindow,win)=>this.bindPropertyPaste(win.document)));
+    this.registerEvent(this.app.workspace.on('window-close',(_workspaceWindow,win)=>{this.pasteDocuments.get(win.document)?.();this.pasteDocuments.delete(win.document);}));
     await this.loadPropertyTypes();
     this.registerHoverLinkSource('manual-order-bases',{display:'NosyGrid',defaultMod:true});
     const registered = this.registerBasesView(VIEW, {
@@ -247,6 +256,9 @@ export class ManualOrderView extends BasesView {
       if(path&&!event.ctrlKey&&!event.metaKey&&!event.shiftKey&&!this.selectedRows.has(path))this.selectRow(path,event);
       return;
     }
+    const fileLink=(event.target as Element)?.closest?.<HTMLElement>('.manual-order-file-link');
+    const filePath=fileLink?.closest<HTMLElement>('tr')?.dataset.rowPath;
+    if(event.type==='pointerdown' && fileLink && this.root.contains(fileLink) && filePath && this.selectedRows.has(filePath))return;
     if(this.selectedRows.size){this.selectedRows.clear();this.rowAnchor=undefined;this.paintRowSelection();}
   };
   private readonly rowSelectionClick=(event:MouseEvent)=>{
@@ -293,6 +305,7 @@ export class ManualOrderView extends BasesView {
     this.summaries=new Summaries(this.root,controller,this.app,()=>readViewSummaries(this.config,this.summaryColumns()),property=>this.config.getDisplayName(property),(property,event)=>this.openSummaryMenu(property,event));
     this.boardOrder=new BoardOrder(this.root,()=>this.config.get(BOARD_ORDER_KEY),value=>this.config.set(BOARD_ORDER_KEY,value),()=>this.onDataUpdated(),error=>new Notice(`Could not save group positions: ${String(error)}`),()=>!this.plugin.busy&&!this.plugin.editorOwner&&!this.movingRows&&!this.rowDropPending&&!this.boardLayout.active);
     const doc=this.root.ownerDocument;
+    this.plugin.bindPropertyPaste(doc);
     doc.addEventListener('pointerdown',this.rowSelectionPointer,true);doc.addEventListener('click',this.rowSelectionClick,true);
     this.register(()=>{doc.removeEventListener('pointerdown',this.rowSelectionPointer,true);doc.removeEventListener('click',this.rowSelectionClick,true);});
     doc.addEventListener('dragend',this.cancelRowDrag,true);doc.addEventListener('drop',this.cancelRowDrag);doc.addEventListener('keydown',this.cancelRowDrag,true);doc.defaultView?.addEventListener('blur',this.cancelRowDrag);
@@ -353,7 +366,6 @@ export class ManualOrderView extends BasesView {
     if(this.groupMenuOpen)this.renderGroupControls(this.root.createDiv({cls:'manual-order-group-menu'}));
     }
     bar.createSpan({cls:'manual-order-hint',text:this.plugin.busy?'Saving…':'Click to edit · Drag across cells to select · Drag ⋮⋮ to reorder'});
-    bar.createSpan({cls:'manual-order-row-selection-status'});
     const nativeRows = this.data.groupedData.map(group=>sortRows(group.entries.map(entry=> {
       const state=this.rankState(entry),rank=state.rank;if(!state.valid)this.valid=false;
       return {path:entry.file.path,rank,entry};
@@ -518,7 +530,24 @@ export class ManualOrderView extends BasesView {
     };
     pruneRemoved(liveGroups);
     const saved=this.config.get(RETAINED_GROUPS_KEY);
-    const retained=retainGroups(liveGroups,saved,signature,findVaultGroup);
+    const retained=retainGroups(liveGroups,saved,signature,findVaultGroup,group=>{
+      if(group.unknownNative||!group.bindings.length)return;
+      return groupWidthKey(group);
+    },row=>row.path);
+    let migrationSaved=true;
+    if(retained.migratedKeys.size) {
+      let changed=false;
+      for(const [oldKey,newKey]of retained.migratedKeys)if(collapsed.delete(oldKey)){collapsed.add(newKey);changed=true;}
+      if(changed)try{this.config.set(COLLAPSED_KEY,[...collapsed]);}catch(error){migrationSaved=false;new Notice(`Could not migrate collapsed groups: ${String(error)}`);}
+      // Old per-instance widths can use group paths. Shared width/color/order IDs
+      // already use canonical property/value identities and need no rewrite.
+      const rawWidths=this.config.get(BOARD_WIDTHS_KEY);
+      if(rawWidths&&typeof rawWidths==='object'&&!Array.isArray(rawWidths)) {
+        const widths={...rawWidths as Record<string,unknown>};let widthsChanged=false;
+        for(const [oldKey,newKey]of retained.migratedKeys)if(oldKey in widths&&!(newKey in widths)){widths[newKey]=widths[oldKey];widthsChanged=true;}
+        if(widthsChanged)try{this.config.set(BOARD_WIDTHS_KEY,widths);this.boardLayout.begin();}catch(error){migrationSaved=false;new Notice(`Could not migrate group widths: ${String(error)}`);}
+      }
+    }
     pruneRemoved(retained.groups);
     const retainedKeys=new Set<string>();const rememberKeys=(groups:DisplayGroup<TableRow>[])=>{for(const group of groups){retainedKeys.add(group.key);rememberKeys(group.children);}};rememberKeys(retained.groups);
     if(retained.memory)retained.memory.groups=retained.memory.groups.filter(group=>retainedKeys.has(group.key));
@@ -615,9 +644,9 @@ export class ManualOrderView extends BasesView {
     this.summaries.total(hasNativeGroups||rules.length?retained.groups.flatMap(summaryEntries):nativeRows.flat().map(row=>row.entry));
     this.summaries.refresh(this.data,visible);
     applyGroupColors(this.root,readGroupColors(this.config.get(GROUP_COLORS_KEY)));
-    if(JSON.stringify(saved??null)!==JSON.stringify(retained.memory)) {
+    if(migrationSaved&&JSON.stringify(saved??null)!==JSON.stringify(retained.memory)) {
       try {this.config.set(RETAINED_GROUPS_KEY,retained.memory);}
-      catch(error){new Notice(`Could not save known groups: ${String(error)}`);}
+      catch(error){migrationSaved=false;new Notice(`Could not save known groups: ${String(error)}`);}
     }
     if (!this.data.data.length) this.root.createDiv({cls:'manual-order-empty',text:'No notes match this Base.'});
     this.boardAlignment.update();this.boardLayout.measure();this.rowLayout.measure();
@@ -632,7 +661,7 @@ export class ManualOrderView extends BasesView {
       section?.querySelector<HTMLElement>(focusedGroup.selector)?.focus({preventScroll:true});
     }
     this.rowDragScroll.restore();
-    this.renderedLayout=this.layoutStamp();
+    this.renderedLayout=migrationSaved?this.layoutStamp():undefined;
     this.renderedCells.clear();
     const renderedRows=new Map(this.groups.flat().map(row=>[row.path,row]));
     for(const cell of this.root.querySelectorAll<HTMLElement>('td[data-property]')) {
@@ -866,8 +895,6 @@ export class ManualOrderView extends BasesView {
       row.classList.toggle('manual-order-row-selected',selected);
       row.setAttribute('aria-selected',String(selected));row.querySelector('.manual-order-handle')?.setAttribute('aria-pressed',String(selected));
     }
-    const status=this.root.querySelector<HTMLElement>('.manual-order-row-selection-status');
-    if(status)status.setText(this.selectedRows.size?`${this.selectedRows.size} row${this.selectedRows.size===1?'':'s'} selected`:'');
   }
 
   private selectRow(path:string,event:MouseEvent) {
@@ -977,8 +1004,11 @@ export class ManualOrderView extends BasesView {
       const paths=[...this.root.querySelectorAll<HTMLElement>('tr[data-row-path]')].map(row=>row.dataset.rowPath!).filter(path=>this.selectedRows.has(path));
       this.drag={path:row.path,paths,group,revision:this.revision};
       event.dataTransfer?.setData(ROW_DRAG_TYPE,JSON.stringify(paths));
-      event.dataTransfer?.setData('text/plain',row.path);
-      if (event.dataTransfer) event.dataTransfer.effectAllowed='move';
+      if(event.dataTransfer) {
+        const files=paths.map(path=>this.app.vault.getFileByPath(path)).filter((file):file is TFile=>!!file);
+        event.dataTransfer.setData('text/plain',files.map(file=>`[[${file.path}]]`).join('\n'));
+        if(!startNativeFileDrag(this.app,event,files))event.dataTransfer.effectAllowed='copyMove';
+      }
       this.rowDragPreview.start(paths,tr,event);
     };
     handle.ondragend=()=>{this.drag=undefined; this.clearIndicators();if(!this.rowDropPending){this.rowDragPreview.stop();this.rowDragScroll.unlock();}};
@@ -997,6 +1027,8 @@ export class ManualOrderView extends BasesView {
       event.preventDefault();
       if(!this.selectedRows.has(row.path))this.selectRow(row.path,event);
       const menu=new Menu();
+      const copySelection=new Set(this.selectedRows),copyPaths=this.visibleRowPaths();
+      menu.addItem(item=>item.setTitle(copySelection.size===1?'Copy link':'Copy links').setIcon('link').onClick(()=>void this.copySelectedRowLinks(copyPaths,copySelection)));
       const liveIndex=this.groups[group].indexOf(row);
       menu.addItem(item=>item.setTitle('Move up').setIcon('arrow-up').setDisabled(liveIndex===0 || !this.valid || this.plugin.busy).onClick(()=>void this.move(row.path,this.groups[group][liveIndex-1].path,false,group)));
       menu.addItem(item=>item.setTitle('Move down').setIcon('arrow-down').setDisabled(liveIndex===this.groups[group].length-1 || !this.valid || this.plugin.busy).onClick(()=>void this.move(row.path,this.groups[group][liveIndex+1].path,true,group)));
@@ -1026,7 +1058,7 @@ export class ManualOrderView extends BasesView {
       const content=cell.createDiv({cls:'manual-order-cell-content'});
       cell.dataset.path=row.path;cell.dataset.property=property;
       cell.addEventListener('dragover',event=>{
-        if(!hasLinkDrag(event.dataTransfer))return;
+        if(!hasLinkDrag(event.dataTransfer) && !hasNoteLinksDrag(event.dataTransfer))return;
         event.stopPropagation();
         if(this.acceptsLinkDrop(row.entry,property)) {
           event.preventDefault();if(event.dataTransfer)event.dataTransfer.dropEffect='copy';cell.classList.add('manual-order-link-drop-target');
@@ -1036,11 +1068,11 @@ export class ManualOrderView extends BasesView {
         if(!event.relatedTarget || !cell.contains(event.relatedTarget as Node))cell.classList.remove('manual-order-link-drop-target');
       });
       cell.addEventListener('drop',event=>{
-        if(!hasLinkDrag(event.dataTransfer))return;
+        if(!hasLinkDrag(event.dataTransfer) && !hasNoteLinksDrag(event.dataTransfer))return;
         event.preventDefault();event.stopImmediatePropagation();clearLinkDropTargets(cell.ownerDocument);
-        const link=readLinkDrag(event.dataTransfer);
-        if(!link) {new Notice('The dragged link is invalid.');return;}
-        void this.dropLink(row.entry,property,link);
+        const links=hasNoteLinksDrag(event.dataTransfer)?readNoteLinksDrag(event.dataTransfer):[readLinkDrag(event.dataTransfer)].filter((link):link is DraggedLink=>!!link);
+        if(!links?.length) {new Notice('The dragged link is invalid.');return;}
+        void this.dropLinks(row.entry,property,links);
       },true);
       const editable=editableProperty(property,row.entry.file.extension);
       if(editable) {
@@ -1072,8 +1104,16 @@ export class ManualOrderView extends BasesView {
         };
       } else cell.title=property.startsWith('formula.')?'Calculated formula · read-only':'Computed file property · read-only';
       if (property==='file.name' || property==='file.basename') {
-        const link=content.createEl('a',{cls:'internal-link',text:row.entry.file.basename,href:row.path});
-        makeLinkDraggable(link,this.app,row.path,`[[${row.path}]]`);
+        const link=content.createEl('a',{cls:'internal-link manual-order-file-link',text:row.entry.file.basename,href:row.path});
+        link.draggable=true;
+        link.addEventListener('dragstart',event=>{
+          if(!event.dataTransfer)return;
+          const paths=this.selectedRows.has(row.path)?[...this.root.querySelectorAll<HTMLElement>('tr[data-row-path]')].map(item=>item.dataset.rowPath!).filter(path=>this.selectedRows.has(path)):[row.path];
+          const files=paths.map(path=>this.app.vault.getFileByPath(path)).filter((file):file is TFile=>!!file);
+          if(!files.length)return;
+          writeNoteLinksDrag(event.dataTransfer,files);startNativeFileDrag(this.app,event,files);event.stopImmediatePropagation();
+        },true);
+        link.addEventListener('dragend',()=>clearLinkDropTargets(link.ownerDocument));
         link.onclick=event=>{event.preventDefault();void this.app.workspace.openLinkText(row.path,'',Keymap.isModEvent(event));};
         link.onauxclick=event=>{if(event.button===1){event.preventDefault();void this.app.workspace.openLinkText(row.path,'','tab');}};
         link.onmouseover=event=>this.app.workspace.trigger('hover-link',{event,source:'bases',hoverParent:this.app.renderContext,targetEl:link,linktext:row.path});
@@ -1130,14 +1170,32 @@ export class ManualOrderView extends BasesView {
 
   renameRow(oldPath:string,newPath:string) {try{this.viewOrder.rename(oldPath,newPath);}catch(error){new Notice(`File renamed, but its view rank could not be saved: ${String(error)}`,8000);}this.selection.renamePath(oldPath,newPath);this.rowLayout.rename(oldPath,newPath);if(this.selectedRows.delete(oldPath))this.selectedRows.add(newPath);if(this.rowAnchor===oldPath)this.rowAnchor=newPath;}
 
+  private visibleRowPaths():string[] {
+    return [...this.root.querySelectorAll<HTMLElement>('tr[data-row-path]')].map(row=>row.dataset.rowPath!);
+  }
+
+  private async copySelectedRowLinks(paths:string[],selection:ReadonlySet<string>) {
+    try {
+      const text=rowLinksForClipboard(paths,selection),clipboard=this.root.ownerDocument.defaultView?.navigator.clipboard;
+      if(!clipboard?.writeText)throw new Error('Clipboard access is unavailable.');
+      await clipboard.writeText(text);
+      this.plugin.propertyPaste.remember(text);
+      new Notice(selection.size===1?'Copied link.':'Copied links.');
+    } catch(error) {new Notice(`Could not copy links: ${error instanceof Error?error.message:String(error)}`,8000);}
+  }
+
   private readonly onCopy=(event:ClipboardEvent)=>{
     if(!event.clipboardData)return;
     const target=event.target as HTMLElement;
     const input=target.closest?.<HTMLInputElement|HTMLTextAreaElement>('input,textarea');
     // Highlighted editor text keeps the browser's normal copy behavior.
-    if(input&&input.selectionStart!==input.selectionEnd&&!(this.editor instanceof ListCellEditor&&this.editor.hasItemSelection()))return;
+    if(input&&input.selectionStart!==input.selectionEnd)return;
     if(target.closest?.('select,[contenteditable=true]'))return;
     try {
+      if(this.selectedRows.size) {
+        const text=rowLinksForClipboard(this.visibleRowPaths(),this.selectedRows);
+        event.clipboardData.setData('text/plain',text);this.plugin.propertyPaste.remember(text);event.preventDefault();event.stopImmediatePropagation();return;
+      }
       const range=this.selection.getRange();if(!range.length)return;
       const entries=new Map(this.data.data.map(entry=>[entry.file.path,entry]));
       const activeCell=this.editor?.element.closest<HTMLElement>('td');
@@ -1210,23 +1268,24 @@ export class ManualOrderView extends BasesView {
     const type=this.plugin.propertyType(property,this.data.data);return type==='text'||type==='list';
   }
 
-  private async dropLink(entry:BasesEntry,property:BasesPropertyId,payload:DraggedLink) {
+  private async dropLinks(entry:BasesEntry,property:BasesPropertyId,payloads:DraggedLink[]) {
     try {
       if(this.disposed)return;
       await this.plugin.loadPropertyTypes();
       if(!this.acceptsLinkDrop(entry,property))throw new Error('Drop links into a writable Text or List property.');
       const owner=this.plugin.editorOwner,editor=owner?.editor;
       const activeCell=editor?.element.closest<HTMLElement>('td');
-      if(editor && activeCell?.dataset.path===entry.file.path && activeCell.dataset.property===property) {
-        const added=await editor.addLink(linkForDestination(this.app,payload,entry.file.path));
+      if(payloads.length===1 && editor && activeCell?.dataset.path===entry.file.path && activeCell.dataset.property===property) {
+        const added=await editor.addLink(linkForDestination(this.app,payloads[0],entry.file.path));
         if(added || owner?.editor===editor)return;
       } else if(editor && !(await editor.save()))return;
       if(this.disposed)return;
       const type=this.plugin.propertyType(property,this.data.data);
       if(type!=='text'&&type!=='list')throw new Error('The target property type changed. Please try again.');
       const before=await readCell(this.app,entry.file,property);
-      const next=appendLinkValue(before.value,type,linkForDestination(this.app,payload,entry.file.path));
-      await this.plugin.commitCell(before,next);
+      let value:unknown=before.value;
+      for(const payload of payloads)value=appendLinkValue(value,type,linkForDestination(this.app,payload,entry.file.path)).value;
+      await this.plugin.commitCell(before,{exists:true,value});
     } catch(error) {new Notice(`Could not add link: ${error instanceof Error?error.message:String(error)}`,8000);}
   }
 

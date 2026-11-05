@@ -1,6 +1,18 @@
 import {parseYaml} from 'obsidian';
 import {parseEditorValue,type CellValue,type EditorType} from './editing';
 
+/** Vault-root wiki links do not depend on the eventual paste destination. */
+export function rowLinksForClipboard(visiblePaths:Iterable<string>,selected:ReadonlySet<string>):string {
+  const seen=new Set<string>(),links:string[]=[];
+  for(const path of visiblePaths) {
+    if(!selected.has(path)||seen.has(path))continue;
+    if(!path || /[[\]|#\r\n\0]/.test(path))throw new Error(`Cannot safely copy a wiki link for ${path}.`);
+    seen.add(path);links.push(`[[${path}]]`);
+  }
+  if(!links.length)throw new Error('No selected notes are visible.');
+  return links.join('\n');
+}
+
 /** Quote complete cells so embedded separators survive spreadsheet copy/paste. */
 export function serializeClipboard(rows:string[][]):string {
   return rows.map(row=>row.map(value=>/[\t\r\n"]/.test(value)||(!value&&row.length===1&&rows.length>1)?`"${value.replace(/"/g,'""')}"`:value).join('\t')).join('\n');
