@@ -24,6 +24,7 @@ export class RowDragScroll {
       for(const body of this.root.querySelectorAll<HTMLElement>('[data-group-scroll-key]')){const position=this.saved.groups.get(body.dataset.groupScrollKey!);if(position)apply(body,position);}
     } finally {this.restoring=false;}
   };
+  pan(dx:number,dy:number){if(!this.saved)return;this.saved.root.left+=dx;this.saved.root.top+=dy;this.restore();this.saved.root.left=this.root.scrollLeft;this.saved.root.top=this.root.scrollTop;}
   unlock(){this.restore();this.saved=undefined;}
   destroy(){this.unlock();this.root.removeEventListener('scroll',this.restore,true);}
 }

@@ -1508,32 +1508,38 @@ function resizeGroup(ctx,header,dx) {
   dispatch('pointerdown',100,handle);dispatch('pointermove',100+dx,ctx.dom.window.document);dispatch('pointerup',100+dx,ctx.dom.window.document);
 }
 
+function primaryStack(ctx,label) {
+  const element=groupHeader(ctx,label).parentElement.closest('[data-primary-column]');
+  const saved=ctx.options.manualPrimaryGroupStacks?.boards[ctx.view.primaryScope]?.columns.find(column=>column.id===element.dataset.primaryColumn);
+  return {element,saved};
+}
+
 test('individual board widths persist through refresh and reopen without changing notes',()=>{
   const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc',layout:'vertical'}];ctx.view.onDataUpdated();
-  const key=groupHeader(ctx,'note.team: A').parentElement.dataset.groupWidthKey;resizeGroup(ctx,groupHeader(ctx,'note.team: A'),120);
-  assert.equal(ctx.options.manualGroupWidths[key],760);assert.equal(groupHeader(ctx,'note.team: A').parentElement.style.getPropertyValue('--manual-order-column-width'),'760px');assert.equal(groupHeader(ctx,'note.team: B').parentElement.style.getPropertyValue('--manual-order-column-width'),'');
-  const {config,data}=ctx.view;ctx.view.unload();ctx.view=new ManualOrderView({app:ctx.app},ctx.dom.window.document.getElementById('view'),ctx.plugin);ctx.view.config=config;ctx.view.data=data;ctx.view.onDataUpdated();assert.equal(groupHeader(ctx,'note.team: A').parentElement.style.getPropertyValue('--manual-order-column-width'),'760px');assert.equal(ctx.writes,0);
+  resizeGroup(ctx,groupHeader(ctx,'note.team: A'),120);
+  assert.equal(primaryStack(ctx,'note.team: A').saved.width,760);assert.equal(primaryStack(ctx,'note.team: A').element.style.getPropertyValue('--manual-order-column-width'),'760px');assert.equal(primaryStack(ctx,'note.team: B').element.style.getPropertyValue('--manual-order-column-width'),'');
+  const {config,data}=ctx.view;ctx.view.unload();ctx.view=new ManualOrderView({app:ctx.app},ctx.dom.window.document.getElementById('view'),ctx.plugin);ctx.view.config=config;ctx.view.data=data;ctx.view.onDataUpdated();assert.equal(primaryStack(ctx,'note.team: A').element.style.getPropertyValue('--manual-order-column-width'),'760px');assert.equal(ctx.writes,0);
 });
 
 test('collapsed vertical groups become rails and expanding restores the independently saved width',async()=>{
   const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc',layout:'vertical'}];ctx.view.onDataUpdated();resizeGroup(ctx,groupHeader(ctx,'note.team: A'),-120);
   groupHeader(ctx,'note.team: A').click();await settle(ctx);let column=groupHeader(ctx,'note.team: A').parentElement;assert.equal(column.classList.contains('is-board-collapsed'),true);assert.equal(column.querySelector('.manual-order-group-body'),null);assert.equal(column.querySelector('.manual-order-column-resize'),null);
-  groupHeader(ctx,'note.team: A').click();await settle(ctx);column=groupHeader(ctx,'note.team: A').parentElement;assert.equal(column.classList.contains('is-board-collapsed'),false);assert.equal(column.style.getPropertyValue('--manual-order-column-width'),'520px');assert.ok(column.querySelector('table'));assert.equal(ctx.writes,0);
+  groupHeader(ctx,'note.team: A').click();await settle(ctx);column=groupHeader(ctx,'note.team: A').parentElement;assert.equal(column.classList.contains('is-board-collapsed'),false);assert.equal(primaryStack(ctx,'note.team: A').element.style.getPropertyValue('--manual-order-column-width'),'520px');assert.ok(column.querySelector('table'));assert.equal(ctx.writes,0);
 });
 
 test('resizing defers metadata redraw until release and supports resetting only that group',()=>{
   const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc',layout:'vertical'}];ctx.view.onDataUpdated();
   const header=groupHeader(ctx,'note.team: A'),handle=header.parentElement.querySelector('.manual-order-column-resize'),revision=ctx.view.revision;
   const event=new ctx.dom.window.MouseEvent('pointerdown',{bubbles:true,cancelable:true,button:0,clientX:100});Object.defineProperty(event,'pointerId',{value:1});handle.dispatchEvent(event);
-  ctx.view.onDataUpdated();assert.equal(ctx.view.revision,revision);ctx.dom.window.document.dispatchEvent(new ctx.dom.window.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));assert.equal(ctx.options.manualGroupWidths,undefined);
+  ctx.view.onDataUpdated();assert.equal(ctx.view.revision,revision);ctx.dom.window.document.dispatchEvent(new ctx.dom.window.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));assert.equal(ctx.options.manualPrimaryGroupStacks,undefined);
   resizeGroup(ctx,groupHeader(ctx,'note.team: A'),-100);resizeGroup(ctx,groupHeader(ctx,'note.team: B'),-50);
-  groupHeader(ctx,'note.team: A').parentElement.querySelector('.manual-order-column-resize').dispatchEvent(new ctx.dom.window.MouseEvent('dblclick',{bubbles:true,cancelable:true}));assert.equal(Object.keys(ctx.options.manualGroupWidths).length,1);assert.equal(ctx.writes,0);
+  groupHeader(ctx,'note.team: A').parentElement.querySelector('.manual-order-column-resize').dispatchEvent(new ctx.dom.window.MouseEvent('dblclick',{bubbles:true,cancelable:true}));assert.equal(primaryStack(ctx,'note.team: A').saved.width,undefined);assert.equal(primaryStack(ctx,'note.team: B').saved.width,590);assert.equal(ctx.writes,0);
 });
 
 test('collapsed rails remain row-drop targets without expanding or losing their saved width',async()=>{
-  const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc',layout:'vertical'}];ctx.view.onDataUpdated();resizeGroup(ctx,groupHeader(ctx,'note.team: B'),-80);const key=groupHeader(ctx,'note.team: B').parentElement.dataset.groupWidthKey;
+  const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc',layout:'vertical'}];ctx.view.onDataUpdated();resizeGroup(ctx,groupHeader(ctx,'note.team: B'),-80);
   groupHeader(ctx,'note.team: B').click();await settle(ctx);await dropRows(ctx,'Note 1.md',groupHeader(ctx,'note.team: B'));
-  assert.equal(ctx.records.get('Note 1.md').fm.team,'B');assert.equal(groupHeader(ctx,'note.team: B').parentElement.classList.contains('is-board-collapsed'),true);assert.equal(ctx.options.manualGroupWidths[key],560);
+  assert.equal(ctx.records.get('Note 1.md').fm.team,'B');assert.equal(groupHeader(ctx,'note.team: B').parentElement.classList.contains('is-board-collapsed'),true);assert.equal(primaryStack(ctx,'note.team: B').saved.width,560);
 });
 
 test('vertical row dragover does not auto-scroll at viewport edges for single or selected rows',async()=>{
@@ -1614,10 +1620,14 @@ test('native horizontal parents reserve the same nested vertical value positions
 
 function groupGrip(header) {return header.querySelector('.manual-order-group-move');}
 async function dropGroup(ctx,source,target,after=false) {
-  const data=dataTransfer();dragEvent(ctx,groupGrip(source),'dragstart',data);target.parentElement.getBoundingClientRect=()=>({left:0,width:400});
-  for(const type of ['dragover','drop']){const event=new ctx.dom.window.MouseEvent(type,{bubbles:true,cancelable:true,clientX:after?390:10});Object.defineProperty(event,'dataTransfer',{value:data});target.dispatchEvent(event);}await settle(ctx);
+  const data=dataTransfer(),doc=ctx.dom.window.document,originalHit=doc.elementFromPoint,originalFrame=ctx.dom.window.requestAnimationFrame;
+  doc.elementFromPoint=()=>target;ctx.dom.window.requestAnimationFrame=()=>0;
+  try {
+    dragEvent(ctx,groupGrip(source),'dragstart',data);target.parentElement.getBoundingClientRect=()=>({left:0,right:400,top:0,bottom:200,width:400,height:200});
+    for(const type of ['dragover','drop']){const event=new ctx.dom.window.MouseEvent(type,{bubbles:true,cancelable:true,clientX:after?390:10,clientY:100});Object.defineProperty(event,'dataTransfer',{value:data});target.dispatchEvent(event);}await settle(ctx);
+  } finally {doc.elementFromPoint=originalHit;ctx.dom.window.requestAnimationFrame=originalFrame;}
 }
-function stageColumns(ctx) {return [...ctx.dom.window.document.querySelectorAll('.manual-order-group-board')].map(board=>[...board.children].map(column=>column.querySelector('.manual-order-group-label').textContent));}
+function stageColumns(ctx) {return [...ctx.dom.window.document.querySelectorAll('.manual-order-group-board')].map(board=>[...board.children].flatMap(column=>column.matches('.manual-order-primary-stack')?[...column.children]:[column]).map(column=>column.querySelector('.manual-order-group-label').textContent));}
 
 test('missing vertical values are empty row-drop destinations using the destination horizontal bindings',async()=>{
   const ctx=groupedMoveFixture();ctx.options.manualGroups[1].layout='vertical';ctx.view.onDataUpdated();
@@ -1651,14 +1661,14 @@ test('dragging vertical groups reorders matching columns together and persists a
 
 test('group grips do not collapse headers and keyboard reordering can reset to the configured sort',async()=>{
   const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc',layout:'vertical'}];ctx.view.onDataUpdated();groupGrip(groupHeader(ctx,'note.team: A')).click();assert.equal(groupHeader(ctx,'note.team: A').getAttribute('aria-expanded'),'true');assert.equal(ctx.options.manualVerticalGroupOrder,undefined);
-  groupGrip(groupHeader(ctx,'note.team: A')).dispatchEvent(new ctx.dom.window.KeyboardEvent('keydown',{key:'ArrowRight',altKey:true,bubbles:true,cancelable:true}));await settle(ctx);assert.deepEqual(stageColumns(ctx),[['note.team: B','note.team: A']]);
-  [...ctx.dom.window.document.querySelectorAll('.manual-order-toolbar button')].find(button=>button.textContent==='Groups (1)').click();await settle(ctx);ctx.dom.window.document.querySelector('.manual-order-reset-group-order').click();await settle(ctx);assert.equal(ctx.options.manualVerticalGroupOrder,undefined);assert.deepEqual(stageColumns(ctx),[['note.team: A','note.team: B']]);assert.equal(ctx.writes,0);
+  groupGrip(groupHeader(ctx,'note.team: A')).dispatchEvent(new ctx.dom.window.KeyboardEvent('keydown',{key:'ArrowRight',altKey:true,bubbles:true,cancelable:true}));await settle(ctx);assert.deepEqual(stageColumns(ctx),[['note.team: B','note.team: A']]);assert.equal(primaryStack(ctx,'note.team: A').element,primaryStack(ctx,'note.team: B').element);
+  [...ctx.dom.window.document.querySelectorAll('.manual-order-toolbar button')].find(button=>button.textContent==='Groups (1)').click();await settle(ctx);ctx.dom.window.document.querySelector('.manual-order-reset-group-order').click();await settle(ctx);assert.equal(ctx.options.manualVerticalGroupOrder,undefined);assert.equal(ctx.options.manualPrimaryGroupStacks,undefined);assert.deepEqual(stageColumns(ctx),[['note.team: A','note.team: B']]);assert.equal(ctx.writes,0);
 });
 
 test('native primary groups keep their native order until the user repositions a group',async()=>{
   const ctx=groupedMoveFixture();ctx.options.manualGroups=[];ctx.options.manualNativeGroupLayout='vertical';ctx.view.config.groupBy={property:'note.team',direction:'DESC'};
   ctx.view.data.groupedData=[{entries:ctx.entries.slice(2),key:{toString:()=> 'B',renderTo:el=>{el.textContent='B';}},hasKey:()=>true},{entries:ctx.entries.slice(0,2),key:{toString:()=> 'A',renderTo:el=>{el.textContent='A';}},hasKey:()=>true}];ctx.view.onDataUpdated();assert.deepEqual(stageColumns(ctx),[['B','A']]);
-  await dropGroup(ctx,groupHeader(ctx,'A'),groupHeader(ctx,'B'));assert.deepEqual(stageColumns(ctx),[['A','B']]);assert.ok(ctx.options.manualVerticalGroupOrder);assert.equal(ctx.writes,0);
+  await dropGroup(ctx,groupHeader(ctx,'A'),groupHeader(ctx,'B'));assert.deepEqual(stageColumns(ctx),[['A','B']]);assert.ok(ctx.options.manualPrimaryGroupStacks);assert.equal(ctx.writes,0);
 });
 
 test('groups cannot be dragged into a different nested alignment scope',async()=>{
@@ -1667,19 +1677,19 @@ test('groups cannot be dragged into a different nested alignment scope',async()=
 });
 
 test('collapsed group rails can be repositioned without changing collapsed state or saved widths',async()=>{
-  const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc',layout:'vertical'}];ctx.view.onDataUpdated();resizeGroup(ctx,groupHeader(ctx,'note.team: A'),-100);const widths=JSON.stringify(ctx.options.manualGroupWidths);groupHeader(ctx,'note.team: A').click();await settle(ctx);
-  await dropGroup(ctx,groupHeader(ctx,'note.team: A'),groupHeader(ctx,'note.team: B'),true);assert.deepEqual(stageColumns(ctx),[['note.team: B','note.team: A']]);assert.equal(groupHeader(ctx,'note.team: A').getAttribute('aria-expanded'),'false');assert.equal(JSON.stringify(ctx.options.manualGroupWidths),widths);assert.equal(ctx.writes,0);
+  const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc',layout:'vertical'}];ctx.view.onDataUpdated();resizeGroup(ctx,groupHeader(ctx,'note.team: A'),-100);const width=primaryStack(ctx,'note.team: A').saved.width;groupHeader(ctx,'note.team: A').click();await settle(ctx);
+  await dropGroup(ctx,groupHeader(ctx,'note.team: A'),groupHeader(ctx,'note.team: B'),true);assert.deepEqual(stageColumns(ctx),[['note.team: B','note.team: A']]);assert.equal(groupHeader(ctx,'note.team: A').getAttribute('aria-expanded'),'false');assert.equal(primaryStack(ctx,'note.team: A').saved.width,width);assert.equal(ctx.writes,0);
 });
 
 test('failed group-position saves leave the original order intact',async()=>{
-  const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc',layout:'vertical'}];ctx.view.onDataUpdated();const save=ctx.view.config.set;ctx.view.config.set=(key,value)=>{if(key==='manualVerticalGroupOrder')throw new Error('save failed');save(key,value);};
-  await dropGroup(ctx,groupHeader(ctx,'note.team: B'),groupHeader(ctx,'note.team: A'));assert.deepEqual(stageColumns(ctx),[['note.team: A','note.team: B']]);assert.equal(ctx.options.manualVerticalGroupOrder,undefined);assert.match(globalThis.notices.at(-1),/save failed/);assert.equal(ctx.writes,0);
+  const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc',layout:'vertical'}];ctx.view.onDataUpdated();const save=ctx.view.config.set;ctx.view.config.set=(key,value)=>{if(key==='manualPrimaryGroupStacks'&&value)throw new Error('save failed');save(key,value);};
+  await dropGroup(ctx,groupHeader(ctx,'note.team: B'),groupHeader(ctx,'note.team: A'));assert.deepEqual(stageColumns(ctx),[['note.team: A','note.team: B']]);assert.equal(ctx.options.manualPrimaryGroupStacks,undefined);assert.match(globalThis.notices.at(-1),/save failed/);assert.equal(ctx.writes,0);
 });
 
 test('cancelled or refreshed group drags do not persist an order',()=>{
   for(const cancel of ['escape','refresh']) {
-    const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc',layout:'vertical'}];ctx.view.onDataUpdated();dragEvent(ctx,groupGrip(groupHeader(ctx,'note.team: B')),'dragstart',dataTransfer());assert.equal(ctx.view.boardOrder.active,true);
-    if(cancel==='escape')ctx.dom.window.document.dispatchEvent(new ctx.dom.window.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));else ctx.view.onDataUpdated();assert.equal(ctx.view.boardOrder.active,false);assert.equal(ctx.options.manualVerticalGroupOrder,undefined);assert.equal(ctx.writes,0);
+    const ctx=groupedMoveFixture();ctx.options.manualGroups=[{property:'note.team',direction:'asc',layout:'vertical'}];ctx.view.onDataUpdated();dragEvent(ctx,groupGrip(groupHeader(ctx,'note.team: B')),'dragstart',dataTransfer());assert.equal(ctx.view.primaryStacks.active,true);
+    if(cancel==='escape')ctx.dom.window.document.dispatchEvent(new ctx.dom.window.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));else ctx.view.onDataUpdated();assert.equal(ctx.view.primaryStacks.active,false);assert.equal(ctx.options.manualPrimaryGroupStacks,undefined);assert.equal(ctx.writes,0);
   }
 });
 

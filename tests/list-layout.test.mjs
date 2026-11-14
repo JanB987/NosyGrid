@@ -299,8 +299,8 @@ test('real browser: vertical lists, fixed rows, expansion persistence and editin
     await page.getByLabel('Group level 1 layout',{exact:true}).selectOption('vertical');
     await page.evaluate(()=>document.querySelector('.menu.bases-toolbar-group-menu')?.remove());
     const board=page.locator('.manual-order-bases > .manual-order-group-board');
-    assert.equal(await board.locator(':scope > .manual-order-board-column').count(),2);
-    const boardRects=await board.locator(':scope > .manual-order-board-column').evaluateAll(columns=>columns.map(column=>{const box=column.getBoundingClientRect();return {x:box.x,y:box.y,width:box.width};}));
+    assert.equal(await board.locator(':scope > .manual-order-primary-stack > .manual-order-board-column').count(),2);
+    const boardRects=await board.locator(':scope > .manual-order-primary-stack > .manual-order-board-column').evaluateAll(columns=>columns.map(column=>{const box=column.getBoundingClientRect();return {x:box.x,y:box.y,width:box.width};}));
     assert.ok(Math.abs(boardRects[0].y-boardRects[1].y)<1,'vertical groups align side by side');assert.ok(boardRects[1].x>boardRects[0].x+boardRects[0].width,'board columns have a visible split');
     assert.equal(await page.evaluate(()=>options.manualGroups[0].layout),'vertical');assert.equal(await page.evaluate(()=>options.manualGroups[1].layout),undefined);
     assert.deepEqual(await board.locator('table').first().locator('th').allTextContents(),['','file.name','note.items','note.other','note.text']);
@@ -318,7 +318,7 @@ test('real browser: vertical lists, fixed rows, expansion persistence and editin
     assert.equal(await page.locator('.manual-order-board-column').first().locator('table th').count(),5,'empty columns keep the chosen table header');
     await page.evaluate(()=>plugin.undoEdit());assert.equal(await page.evaluate(()=>records[1].fm.team),'Project A');
     await page.evaluate(()=>{options=JSON.parse(JSON.stringify(options));openView();});
-    assert.equal(await page.locator('.manual-order-bases > .manual-order-group-board > .manual-order-board-column').count(),2,'per-property board layout survives reopen');
+    assert.equal(await page.locator('.manual-order-bases > .manual-order-group-board > .manual-order-primary-stack > .manual-order-board-column').count(),2,'per-property board layout survives reopen');
     await page.evaluate(()=>{
       testView.config.getOrder=()=>['file.name','note.items','note.other','note.text','note.extra1','note.extra2','note.extra3','note.extra4'];testView.onDataUpdated();
       document.querySelector('[data-group-scroll-key]').scrollLeft=64;
@@ -330,7 +330,7 @@ test('real browser: vertical lists, fixed rows, expansion persistence and editin
     await page.getByRole('button',{name:'Group',exact:true}).click();await page.getByLabel('Group level 2 layout',{exact:true}).selectOption('vertical');
     await page.evaluate(()=>document.querySelector('.menu.bases-toolbar-group-menu')?.remove());
     assert.equal(await page.locator('.manual-order-board-column').count(),5,'vertical groups can create another split inside board columns');
-    const nestedB=page.locator('.manual-order-bases > .manual-order-group-board > .manual-order-board-column').nth(1);
+    const nestedB=page.locator('.manual-order-bases > .manual-order-group-board > .manual-order-primary-stack > .manual-order-board-column').nth(1);
     assert.equal(await nestedB.locator('.manual-order-group-board > .manual-order-board-column').count(),2);
     assert.equal(await nestedB.locator(':scope > .manual-order-group-body').evaluate(body=>body.scrollWidth>body.clientWidth),true,'nested vertical groups scroll inside their parent column');
     await page.getByRole('button',{name:'Group',exact:true}).click();await page.getByLabel('Group level 1 layout',{exact:true}).selectOption('horizontal');
@@ -339,14 +339,14 @@ test('real browser: vertical lists, fixed rows, expansion persistence and editin
     assert.equal(await page.locator('.manual-order-board-column').count(),4,'horizontal parents contain every visible vertical subgroup, including empty tables');
     await page.locator('#view').screenshot({path:'test-build/mixed-group-layouts.png'});
     await page.evaluate(()=>{options.manualGroups=[{property:'note.team',direction:'asc',layout:'vertical'}];openView();});
-    const sizedA=page.locator('.manual-order-bases > .manual-order-group-board > .manual-order-board-column').first();
-    const sizedB=page.locator('.manual-order-bases > .manual-order-group-board > .manual-order-board-column').nth(1);
+    const sizedA=page.locator('.manual-order-bases > .manual-order-group-board > .manual-order-primary-stack > .manual-order-board-column').first();
+    const sizedB=page.locator('.manual-order-bases > .manual-order-group-board > .manual-order-primary-stack > .manual-order-board-column').nth(1);
     const resizeA=page.getByRole('separator',{name:'Resize group: note.team: Project A',exact:true});
     const resizeBox=await resizeA.boundingBox(),originalA=await sizedA.boundingBox();
     await page.mouse.move(resizeBox.x+resizeBox.width/2,resizeBox.y+resizeBox.height/2);await page.mouse.down();await page.mouse.move(resizeBox.x+resizeBox.width/2-120,resizeBox.y+resizeBox.height/2,{steps:8});
     assert.equal(Math.round((await sizedA.boundingBox()).width),Math.round(originalA.width)-120,'group width previews during the drag');
-    assert.equal(await page.evaluate(()=>options.manualGroupWidths),undefined,'drag previews do not write settings on every move');await page.mouse.up();
-    const aKey=await sizedA.getAttribute('data-group-width-key');assert.equal(await page.evaluate(key=>options.manualGroupWidths[key],aKey),520);
+    assert.equal(await page.evaluate(()=>options.manualPrimaryGroupStacks),undefined,'drag previews do not write settings on every move');await page.mouse.up();
+    const aKey=await sizedA.evaluate(column=>column.parentElement.dataset.primaryColumn);assert.equal(await page.evaluate(key=>Object.values(options.manualPrimaryGroupStacks.boards).flatMap(board=>board.columns).find(column=>column.id===key).width,aKey),520);
     const resizeB=page.getByRole('separator',{name:'Resize group: note.team: Project B',exact:true});
     await resizeB.focus();await resizeB.press('ArrowRight');await page.keyboard.press('Shift+ArrowRight');
     assert.equal(Math.round((await sizedB.boundingBox()).width),720,'keyboard resizing adjusts the independently sized group');
@@ -357,11 +357,11 @@ test('real browser: vertical lists, fixed rows, expansion persistence and editin
     assert.equal(Math.round((await sizedA.boundingBox()).width),44,'fully collapsed state is restored on reopen');assert.equal(Math.round((await sizedB.boundingBox()).width),720,'saved widths are restored on reopen');
     await page.locator('#view').screenshot({path:'test-build/collapsed-board-rail.png'});
     await sizedA.locator(':scope > .manual-order-group-header').click();assert.equal(Math.round((await sizedA.boundingBox()).width),520,'expanding restores the previous width');
-    await resizeA.dblclick();assert.equal(await page.evaluate(key=>Object.hasOwn(options.manualGroupWidths,key),aKey),false,'double-click resets only this group to the responsive default');assert.equal(Math.round((await sizedB.boundingBox()).width),720);
+    await resizeA.dblclick();assert.equal(await page.evaluate(key=>Object.hasOwn(Object.values(options.manualPrimaryGroupStacks.boards).flatMap(board=>board.columns).find(column=>column.id===key),'width'),aKey),false,'double-click resets only this group to the responsive default');assert.equal(Math.round((await sizedB.boundingBox()).width),720);
     await page.locator('#view').screenshot({path:'test-build/resized-board-columns.png'});
     for(const multiple of [false,true]) {
       await page.evaluate(()=>{
-        document.getElementById('view').style.height='400px';
+        document.getElementById('view').style.height='400px';delete options.manualPrimaryGroupStacks;
         options.manualGroups=[{property:'note.team',direction:'asc',layout:'vertical'}];options.manualRowHeights={'Note 3.md':560};delete options.manualCollapsedGroups;
         records[0].fm.team='B';records[1].fm.team='B';records[2].fm.team='C';records.find(record=>record.file.path==='Outside.md').fm.team='B';
         if(!records.some(record=>record.file.path==='Board A.md')) {

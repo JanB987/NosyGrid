@@ -45,7 +45,7 @@ export class BoardOrder {
   }
   slots(scope:string){return this.plans.get(scope)?.slots??[];}
   column(element:HTMLElement,scope:string,slot:string,label:string,header:HTMLElement) {
-    const handle=header.createEl('button',{cls:'manual-order-group-move',attr:{type:'button','aria-label':`Move vertical group: ${label}`,title:'Drag to reorder groups. Alt + Left/Right moves this group.'}});setIcon(handle,'grip-vertical');
+    const handle=header.createEl('button',{cls:'manual-order-group-move',attr:{type:'button','aria-label':`Move vertical group: ${label}`,title:'Drag to reorder groups. Alt + Left/Right moves this group.'}});handle.dataset.orderController='nested';setIcon(handle,'grip-vertical');
     handle.draggable=this.slots(scope).length>1;handle.disabled=!handle.draggable||!this.canMove();
     handle.onclick=event=>{event.preventDefault();event.stopPropagation();};
     handle.ondragstart=event=>{

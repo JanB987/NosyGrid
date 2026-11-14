@@ -41,7 +41,7 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/main.js dist/manifest.json dist/styles.css LICENSE THIRD_PARTY_NOTICES.md --clobber
           elif [ -f "docs/releases/$TAG.md" ]; then
-            gh release create "$TAG" --verify-tag --title "$(if [ "$TAG" = "0.30.0" ]; then printf "NosyGrid 0.30.0 — Copy and drag note links"; else printf "NosyGrid %s" "$TAG"; fi)" --notes-file "docs/releases/$TAG.md" dist/main.js dist/manifest.json dist/styles.css LICENSE THIRD_PARTY_NOTICES.md
+            gh release create "$TAG" --verify-tag --title "$(if [ "$TAG" = "0.30.0" ]; then printf "NosyGrid 0.30.0 — Copy and drag note links"; else sed -n '1s/^# //p' "docs/releases/$TAG.md"; fi)" --notes-file "docs/releases/$TAG.md" dist/main.js dist/manifest.json dist/styles.css LICENSE THIRD_PARTY_NOTICES.md
           else
             gh release create "$TAG" --verify-tag --title "NosyGrid $TAG" --generate-notes dist/main.js dist/manifest.json dist/styles.css LICENSE THIRD_PARTY_NOTICES.md
           fi

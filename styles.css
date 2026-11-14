@@ -163,3 +163,16 @@
 
 .manual-order-remove-group-value { flex: none; width: 24px; height: 24px; padding: 3px; background: transparent; box-shadow: none; }
 .manual-order-remove-group-value svg { width: 14px; height: 14px; }
+
+/* Primary groups form independent vertical stacks inside the horizontal board. */
+.manual-order-primary-board { align-items:flex-start; }
+.manual-order-primary-stack { position:relative; display:flex; flex-direction:column; align-items:stretch; gap:16px; flex:0 0 var(--manual-order-column-width,clamp(320px,calc(100% - 16px),640px)); width:var(--manual-order-column-width,clamp(320px,calc(100% - 16px),640px)); min-width:0; }
+.manual-order-primary-stack.is-stack-collapsed { flex-basis:44px; width:44px; }
+.manual-order-primary-stack > .manual-order-board-column:not(.is-board-collapsed) { flex:0 0 auto; width:100%; }
+.manual-order-primary-stack > .manual-order-board-column.is-board-collapsed { flex:0 0 auto; width:44px; }
+.manual-order-primary-stack > .primary-stack-above::before,.manual-order-primary-stack > .primary-stack-below::after { content:''; position:absolute; inset-inline-start:0; width:var(--primary-indicator-width,100%); height:3px; background:var(--interactive-accent); z-index:6; pointer-events:none; }
+.manual-order-primary-stack > .primary-stack-above::before { top:-9px; }
+.manual-order-primary-stack > .primary-stack-below::after { bottom:-9px; }
+.manual-order-primary-stack.primary-stack-before::before,.manual-order-primary-stack.primary-stack-after::after { content:''; position:absolute; top:0; bottom:0; width:3px; background:var(--interactive-accent); z-index:6; pointer-events:none; }
+.manual-order-primary-stack.primary-stack-before::before { inset-inline-start:-9px; }
+.manual-order-primary-stack.primary-stack-after::after { inset-inline-end:-9px; }

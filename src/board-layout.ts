@@ -14,8 +14,9 @@ function legacyWidthGroup(key:string):string|undefined {
     if(typeof property==='string'&&/^(note|file|formula)\..+/.test(property)&&typeof value==='string')return linkedBoardWidthKey(property,value);
   } catch {/* Non-group keys from older versions are left alone. */}
 }
-interface Column {element:HTMLElement;handle?:HTMLElement;widthKey:string}
-interface Resize {column:Column;key:string;pointer:number;x:number;width:number;current:number;originals:Map<Column,string>;direction:number}
+export interface BoardResizeBinding {key:string;target:HTMLElement;get():number|undefined;save(width:number|undefined):void}
+interface Column {element:HTMLElement;target:HTMLElement;handle?:HTMLElement;widthKey:string;binding?:BoardResizeBinding}
+interface Resize {column:Column;key:string;pointer:number;x:number;width:number;current:number;originals:Map<HTMLElement,string>;direction:number}
 
 /** Persist explicit column widths; responsive defaults and collapsed rails need no width entry. */
 export class BoardLayout {
@@ -43,26 +44,26 @@ export class BoardLayout {
   begin(){this.columns.clear();this.widths=readBoardWidths(this.get());this.legacy=this.resolveLegacy(this.widths);}
   private savedWidth(key:string,widthKey:string){return this.widths.get(widthKey)??this.legacy.get(widthKey)??this.widths.get(key);}
   widthFor(widthKey:string){return this.widths.get(widthKey)??this.legacy.get(widthKey);}
-  measure(){for(const [key,column]of this.columns)column.handle?.setAttribute('aria-valuenow',String(Math.round(column.element.getBoundingClientRect().width)||this.savedWidth(key,column.widthKey)||640));}
+  measure(){for(const [key,column]of this.columns)column.handle?.setAttribute('aria-valuenow',String(Math.round(column.target.getBoundingClientRect().width)||column.binding?.get()||this.savedWidth(key,column.widthKey)||640));}
   private apply(widthKey:string,size:number|undefined) {
     for(const column of this.columns.values())if(column.widthKey===widthKey) {
-      if(size===undefined)column.element.style.removeProperty('--manual-order-column-width');else column.element.style.setProperty('--manual-order-column-width',`${size}px`);
+      if(size===undefined)column.target.style.removeProperty('--manual-order-column-width');else column.target.style.setProperty('--manual-order-column-width',`${size}px`);
     }
     this.preview();this.measure();
   }
 
-  column(element:HTMLElement,key:string,closed:boolean,label:string,widthKey=key) {
-    const column:Column={element,widthKey};this.columns.set(key,column);element.dataset.groupWidthKey=widthKey;
+  column(element:HTMLElement,key:string,closed:boolean,label:string,widthKey=key,binding?:BoardResizeBinding) {
+    const column:Column={element,target:binding?.target??element,widthKey:binding?.key??widthKey,binding};this.columns.set(key,column);element.dataset.groupWidthKey=widthKey;element.dataset.resizeKey=column.widthKey;
     element.classList.toggle('is-board-collapsed',closed);
-    const saved=this.savedWidth(key,widthKey);if(saved!==undefined)element.style.setProperty('--manual-order-column-width',`${saved}px`);
+    const saved=binding?binding.get():this.savedWidth(key,widthKey);if(saved!==undefined)column.target.style.setProperty('--manual-order-column-width',`${saved}px`);
     if(closed)return;
     const handle=column.handle=element.createDiv({cls:'manual-order-column-resize',attr:{role:'separator',tabindex:'0','aria-orientation':'vertical','aria-label':`Resize group: ${label}`,'aria-valuemin':String(MIN_BOARD_WIDTH),'aria-valuemax':String(MAX_BOARD_WIDTH),title:'Drag to resize. Arrow keys adjust width. Double-click to reset.'}});
-    const width=()=>Math.round(element.getBoundingClientRect().width)||this.savedWidth(key,widthKey)||640;
+    const width=()=>Math.round(column.target.getBoundingClientRect().width)||saved||640;
     handle.setAttribute('aria-valuenow',String(width()));
     handle.onpointerdown=event=>{
       if(event.button!==0||event.isPrimary===false||!this.canResize())return;
       event.preventDefault();event.stopPropagation();
-      this.drag={column,key,pointer:event.pointerId,x:event.clientX,width:width(),current:width(),originals:new Map([...this.columns.values()].filter(column=>column.widthKey===widthKey).map(column=>[column,column.element.style.getPropertyValue('--manual-order-column-width')])),direction:this.doc.defaultView?.getComputedStyle(element).direction==='rtl'?-1:1};
+      this.drag={column,key,pointer:event.pointerId,x:event.clientX,width:width(),current:width(),originals:new Map([...this.columns.values()].filter(item=>item.widthKey===column.widthKey).map(item=>[item.target,item.target.style.getPropertyValue('--manual-order-column-width')])),direction:this.doc.defaultView?.getComputedStyle(element).direction==='rtl'?-1:1};
       this.root.classList.add('manual-order-resizing-column');
       try{handle.setPointerCapture(event.pointerId);}catch{/* Document listeners also cover pointer capture failures. */}
     };
@@ -72,7 +73,7 @@ export class BoardLayout {
       event.preventDefault();event.stopPropagation();
       const direction=this.doc.defaultView?.getComputedStyle(element).direction==='rtl'?-1:1;
       const size=event.key==='Home'?MIN_BOARD_WIDTH:event.key==='End'?MAX_BOARD_WIDTH:this.clamp(width()+(event.key==='ArrowLeft'?-1:1)*direction*(event.shiftKey?64:16));
-      this.apply(widthKey,size);this.persist(key,size,true);
+      this.apply(column.widthKey,size);this.persist(key,size,true);
     };
   }
 
@@ -91,19 +92,23 @@ export class BoardLayout {
     if(!this.drag||event.pointerId!==this.drag.pointer)return;
     const drag=this.finish()!;
     if(drag.current!==drag.width)this.persist(drag.key,drag.current);
-    else if(this.deferred){this.deferred=false;this.changed();}
+    else {for(const [target,original]of drag.originals){if(original)target.style.setProperty('--manual-order-column-width',original);else target.style.removeProperty('--manual-order-column-width');}this.preview();this.measure();if(this.deferred){this.deferred=false;this.changed();}}
   };
   private readonly cancelPointer=(event:PointerEvent)=>{if(event.pointerId===this.drag?.pointer)this.cancel();};
   private readonly cancel=()=>{
     const drag=this.finish();if(!drag)return;
-    for(const [column,original]of drag.originals){if(original)column.element.style.setProperty('--manual-order-column-width',original);else column.element.style.removeProperty('--manual-order-column-width');column.handle?.setAttribute('aria-valuenow',String(Math.round(column.element.getBoundingClientRect().width)||640));}
+    for(const [target,original]of drag.originals){if(original)target.style.setProperty('--manual-order-column-width',original);else target.style.removeProperty('--manual-order-column-width');}
     this.preview();this.measure();
     this.deferred=false;this.changed();
   };
   private readonly key=(event:KeyboardEvent)=>{if(this.drag&&event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();this.cancel();}};
   private persist(key:string,width:number|undefined,focus=false) {
-    const previous=readBoardWidths(this.get()),next=new Map(previous);
     const column=this.columns.get(key);
+    if(column?.binding){
+      try{column.binding.save(width);}catch{/* The binding reports and restores its own saved state. */}
+      this.deferred=false;this.changed();if(focus)this.columns.get(key)?.handle?.focus({preventScroll:true});return;
+    }
+    const previous=readBoardWidths(this.get()),next=new Map(previous);
     const shared=column?.widthKey??key;
     for(const candidate of next.keys())if(candidate===shared||legacyWidthGroup(candidate)===shared||this.columns.get(candidate)?.widthKey===shared)next.delete(candidate);
     if(width!==undefined)next.set(shared,width);

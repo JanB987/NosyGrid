@@ -1,3 +1,5 @@
+import {PrimaryGroupStacks} from './primary-group-stack-controller';
+import {PRIMARY_STACKS_KEY,readPrimaryStackLayouts} from './primary-group-stacks';
 import { Plugin, BasesView, Notice, Keymap, Menu, parseYaml, getFrontMatterInfo, setIcon,
   type QueryController, type BasesEntry, type BasesPropertyId, type Value, type TFile, type BasesAllOptions } from 'obsidian';
 import { applyChanges, numericRank, planMove, planOrder, rankPrecision, rankGuards, propertyName, sortRows, type Change, type Row, type Direction } from './order';
@@ -281,6 +283,8 @@ export class ManualOrderView extends BasesView {
   private boardLayout:BoardLayout;
   private boardAlignment:BoardAlignment;
   private boardOrder:BoardOrder;
+  private primaryStacks:PrimaryGroupStacks;
+  private primaryScope?:string;
   private valueSections:ValueSection[]=[];
   private valueMenuOpen=new Set<string>();
   private rowDragScroll:RowDragScroll;
@@ -303,7 +307,7 @@ export class ManualOrderView extends BasesView {
     this.rowDragScroll=new RowDragScroll(this.root);
     this.rowDragPreview=new RowDragPreview(this.root);this.register(()=>this.rowDragPreview.destroy());
     this.summaries=new Summaries(this.root,controller,this.app,()=>readViewSummaries(this.config,this.summaryColumns()),property=>this.config.getDisplayName(property),(property,event)=>this.openSummaryMenu(property,event));
-    this.boardOrder=new BoardOrder(this.root,()=>this.config.get(BOARD_ORDER_KEY),value=>this.config.set(BOARD_ORDER_KEY,value),()=>this.onDataUpdated(),error=>new Notice(`Could not save group positions: ${String(error)}`),()=>!this.plugin.busy&&!this.plugin.editorOwner&&!this.movingRows&&!this.rowDropPending&&!this.boardLayout.active);
+    this.boardOrder=new BoardOrder(this.root,()=>this.config.get(BOARD_ORDER_KEY),value=>this.config.set(BOARD_ORDER_KEY,value),()=>this.onDataUpdated(),error=>new Notice(`Could not save group positions: ${String(error)}`),()=>!this.plugin.busy&&!this.plugin.editorOwner&&!this.movingRows&&!this.rowDropPending&&!this.drag&&!this.loadingEditor&&!this.boardLayout.active&&!this.primaryStacks.active);
     const doc=this.root.ownerDocument;
     this.plugin.bindPropertyPaste(doc);
     doc.addEventListener('pointerdown',this.rowSelectionPointer,true);doc.addEventListener('click',this.rowSelectionClick,true);
@@ -316,9 +320,10 @@ export class ManualOrderView extends BasesView {
     this.root.addEventListener('copy',this.onCopy,true);
     this.rowLayout=new RowLayout(this.root,()=>this.config.get(ROW_HEIGHT_KEY),value=>this.config.set(ROW_HEIGHT_KEY,value),error=>new Notice(`Could not save row height: ${String(error)}`));
     this.boardAlignment=new BoardAlignment(key=>this.boardLayout.widthFor(key),()=>this.boardLayout.measure());
-    this.boardLayout=new BoardLayout(this.root,()=>this.config.get(BOARD_WIDTHS_KEY),value=>this.config.set(BOARD_WIDTHS_KEY,value),()=>{this.rowLayout.measure();this.onDataUpdated();},error=>new Notice(`Could not save group width: ${String(error)}`),()=>!this.plugin.busy&&!this.movingRows&&!this.loadingEditor&&!this.boardOrder.active,()=>this.boardAlignment.update());
+    this.boardLayout=new BoardLayout(this.root,()=>this.config.get(BOARD_WIDTHS_KEY),value=>this.config.set(BOARD_WIDTHS_KEY,value),()=>{this.rowLayout.measure();this.onDataUpdated();},error=>new Notice(`Could not save group width: ${String(error)}`),()=>!this.plugin.busy&&!this.plugin.editorOwner&&!this.movingRows&&!this.rowDropPending&&!this.drag&&!this.loadingEditor&&!this.boardOrder.active&&!this.primaryStacks.active,()=>this.boardAlignment.update());
+    this.primaryStacks=new PrimaryGroupStacks(this.root,()=>this.config.get(PRIMARY_STACKS_KEY),value=>this.config.set(PRIMARY_STACKS_KEY,value),()=>this.onDataUpdated(),error=>new Notice(`Could not save primary groups: ${String(error)}`),()=>!this.plugin.busy&&!this.plugin.editorOwner&&!this.loadingEditor&&!this.movingRows&&!this.rowDropPending&&!this.drag&&!this.boardLayout.active&&!this.boardOrder.active);
     plugin.views.add(this);
-    this.register(()=>{ this.disposed=true;if(this.plugin.viewOrderUndo?.owner===this.viewOrder)this.plugin.viewOrderUndo=undefined; this.boardOrder.destroy();this.rowDragScroll.destroy(); this.boardAlignment.destroy(); this.boardLayout.destroy(); this.nativeGroupMenu.destroy(); this.editor?.dispose(); this.rowLayout.destroy(); this.selection.destroy(); if(plugin.editorOwner===this) plugin.editorOwner=undefined; plugin.views.delete(this); this.root.remove(); });
+    this.register(()=>{ this.disposed=true;if(this.plugin.viewOrderUndo?.owner===this.viewOrder)this.plugin.viewOrderUndo=undefined; this.boardOrder.destroy();this.primaryStacks.destroy();this.rowDragScroll.destroy(); this.boardAlignment.destroy(); this.boardLayout.destroy(); this.nativeGroupMenu.destroy(); this.editor?.dispose(); this.rowLayout.destroy(); this.selection.destroy(); if(plugin.editorOwner===this) plugin.editorOwner=undefined; plugin.views.delete(this); this.root.remove(); });
   }
 
   onDataUpdated() {
@@ -328,6 +333,7 @@ export class ManualOrderView extends BasesView {
     if(this.editor || this.loadingEditor || this.plugin.batchWriting || this.plugin.busy)return;
     if(this.boardLayout.active){this.boardLayout.deferRefresh();return;}
     this.boardOrder.cancel();
+    this.primaryStacks.cancel();
     this.cancelRowDrag();
     if(this.patchCells())return;
     this.revision++;
@@ -432,8 +438,10 @@ export class ManualOrderView extends BasesView {
       this.summaries.group(header,summaryEntries(group));
       if(vertical){
         const widthKey=groupWidthKey(group);
-        this.boardLayout.column(section,group.key,closed,label.textContent??group.label,widthKey);if(closed)header.title=label.textContent??group.label;
-        this.boardOrder.column(section,boardScopeKey(group,ancestors),widthKey,label.textContent??group.label,header);
+        const primary=depth===0&&!!parent.dataset.primaryColumn;
+        this.boardLayout.column(section,group.key,closed,label.textContent??group.label,widthKey,primary?this.primaryStacks.resizeBinding(parent.dataset.primaryColumn!,parent):undefined);if(closed)header.title=label.textContent??group.label;
+        if(primary)this.primaryStacks.group(section,widthKey,label.textContent??group.label,header);
+        else this.boardOrder.column(section,boardScopeKey(group,ancestors),widthKey,label.textContent??group.label,header);
       }
       header.ondragover=event=>{
         if(!this.drag||this.drag.revision!==this.revision||this.plugin.busy)return;
@@ -486,6 +494,16 @@ export class ManualOrderView extends BasesView {
       const property=groups[0].property;
       const vertical=verticalGroup(groups[0]);
       const host=vertical?parent.createDiv({cls:'manual-order-group-board',attr:{role:'list','aria-label':`${property?this.config.getDisplayName(property):'Primary'} groups`}}):parent;
+      if(vertical&&depth===0){
+        this.primaryStacks.registerBoard(host);host.classList.add('manual-order-primary-board');
+        const byId=new Map(groups.map(group=>[groupWidthKey(group),group]));
+        for(const column of this.primaryStacks.projection([...byId.keys()]).columns){
+          const wrapper=host.createDiv({cls:'manual-order-primary-stack'});this.primaryStacks.registerColumn(wrapper,column.id);
+          for(const id of column.groups){const group=byId.get(id);if(group)renderGroup(group,wrapper,depth,true,ancestors);}
+          wrapper.classList.toggle('is-stack-collapsed',!wrapper.querySelector('.manual-order-board-column:not(.is-board-collapsed)'));
+        }
+        return;
+      }
       if(vertical)this.boardAlignment.register(host,boardScopeKey(groups[0],ancestors));
       const slots=vertical?this.boardOrder.slots(boardScopeKey(groups[0],ancestors)):[];
       const positions=new Map(slots.map((slot,index)=>[slot,index]));
@@ -591,6 +609,13 @@ export class ManualOrderView extends BasesView {
       const property=boardProperty(scope);
       plan.slots=applyBoardOrder(plan.slots,property?valueSettings[property]?.order:undefined);
     }
+    this.primaryScope=retained.groups.length&&verticalGroup(retained.groups[0])?boardScopeKey(retained.groups[0],[]):undefined;
+    if(this.primaryScope){
+      const plan=boardPlans.get(this.primaryScope),property=boardProperty(this.primaryScope);
+      const order=applyBoardOrder(plan?.slots??[],readBoardOrders(this.config.get(BOARD_ORDER_KEY)).get(this.primaryScope));
+      this.primaryStacks.begin(this.primaryScope,order,order.filter(id=>!valueSettings[property??'']?.hidden.includes(id)),valueSettings[property??'']?.removed??[],id=>this.boardLayout.widthFor(id));
+      boardPlans.delete(this.primaryScope);
+    }
     this.boardOrder.begin(boardPlans);this.boardAlignment.begin(boardPlans);
     const sections=new Map<string,ValueSection>();
     const collectValues=(groups:DisplayGroup<TableRow>[],ancestors:string[]=[])=>{
@@ -623,7 +648,7 @@ export class ManualOrderView extends BasesView {
     }
     this.valueSections=[...sections.values()];
     for(const section of this.valueSections) {
-      const order=applyBoardOrder(section.items.map(item=>item.id),this.boardOrder.slots(section.scopes[0]));
+      const order=applyBoardOrder(section.items.map(item=>item.id),section.scopes.includes(this.primaryScope??'')?this.primaryStacks.flat():this.boardOrder.slots(section.scopes[0]));
       section.items.sort((a,b)=>order.indexOf(a.id)-order.indexOf(b.id));
     }
     // Hidden values stay in the catalogue and order settings, but reserve no board space.
@@ -677,7 +702,7 @@ export class ManualOrderView extends BasesView {
     const properties=[...new Set([...rules.map(rule=>rule.property),...(primary?[primary]:[])])];
     const value=(entry:BasesEntry,property:BasesPropertyId)=>property.startsWith('note.')?this.cellValue(entry,property):entry.getValue(property)?.toString();
     return JSON.stringify([
-      ['orderStorage','orderProperty','orderDirection','orderDecimals',GROUPS_KEY,COLLAPSED_KEY,NATIVE_LAYOUT_KEY,BOARD_WIDTHS_KEY,BOARD_ORDER_KEY,GROUP_VALUES_KEY,RETAINED_GROUPS_KEY].map(key=>this.config.get(key)),
+      ['orderStorage','orderProperty','orderDirection','orderDecimals',GROUPS_KEY,COLLAPSED_KEY,NATIVE_LAYOUT_KEY,BOARD_WIDTHS_KEY,BOARD_ORDER_KEY,PRIMARY_STACKS_KEY,GROUP_VALUES_KEY,RETAINED_GROUPS_KEY].map(key=>this.config.get(key)),
       this.config.getOrder().map(id=>[id,this.config.getDisplayName(id)]),this.groupMenuOpen,nativeGroupScope(this.config),
       this.data.data.map(entry=>entry.file.path).sort(),this.data.data.every(entry=>this.rankState(entry).valid),
       this.data.groupedData.map(group=>[group.key?.toString(),group.hasKey(),group.entries.map(entry=>[entry.file.path,entry.file.name,properties.map(property=>value(entry,property))]).sort((a,b)=>String(a[0]).localeCompare(String(b[0])))]),
@@ -764,9 +789,11 @@ export class ManualOrderView extends BasesView {
     }
     for(const checkbox of this.root.querySelectorAll<HTMLInputElement>('td[data-property] input[type=checkbox]'))checkbox.disabled=locked;
     for(const handle of this.root.querySelectorAll<HTMLButtonElement>('.manual-order-group-move')) {
+      if(handle.dataset.orderController==='primary')continue;
       const scope=handle.closest('.manual-order-board-column')?.parentElement?.dataset.boardAlignmentKey;
       handle.disabled=locked||!scope||this.boardOrder.slots(scope).length<2;handle.draggable=!handle.disabled;
     }
+    this.primaryStacks.updateControls();
   }
 
   private renderGroupControls(host:HTMLElement,native=false) {
@@ -780,15 +807,16 @@ export class ManualOrderView extends BasesView {
       },(next,reorder)=>{
         void (async()=>{
           if(this.editor&&!(await this.editor.save()))return;
-          const previous=this.config.get(GROUP_VALUES_KEY),previousOrder=this.config.get(BOARD_ORDER_KEY);
+          const previous=this.config.get(GROUP_VALUES_KEY),previousOrder=this.config.get(BOARD_ORDER_KEY),previousStacks=this.config.get(PRIMARY_STACKS_KEY);
           try {
             if(reorder) {
-              const orders=readBoardOrders(previousOrder);for(const scope of section.scopes)orders.set(scope,next.order);
-              this.config.set(BOARD_ORDER_KEY,Object.fromEntries(orders));
+              if(this.primaryScope&&section.scopes.includes(this.primaryScope))this.primaryStacks.reorderSingletons(next.order);
+              const orders=readBoardOrders(previousOrder);for(const scope of section.scopes)if(scope!==this.primaryScope)orders.set(scope,next.order);
+              if(section.scopes.some(scope=>scope!==this.primaryScope))this.config.set(BOARD_ORDER_KEY,Object.fromEntries(orders));
             }
             this.config.set(GROUP_VALUES_KEY,{...settings,[section.property]:next});this.onDataUpdated();this.nativeGroupMenu.refresh();
           } catch(error) {
-            try{this.config.set(BOARD_ORDER_KEY,previousOrder??null);if(this.config.get(GROUP_VALUES_KEY)!==previous)this.config.set(GROUP_VALUES_KEY,previous??null);}catch(rollbackError){console.error('NosyGrid: could not restore view settings.',rollbackError);}
+            try{this.config.set(BOARD_ORDER_KEY,previousOrder??null);this.config.set(PRIMARY_STACKS_KEY,previousStacks??null);if(this.config.get(GROUP_VALUES_KEY)!==previous)this.config.set(GROUP_VALUES_KEY,previous??null);}catch(rollbackError){console.error('NosyGrid: could not restore view settings.',rollbackError);}
             new Notice(`Could not save group values: ${String(error)}`);this.onDataUpdated();this.nativeGroupMenu.refresh();
           }
         })();
@@ -804,17 +832,18 @@ export class ManualOrderView extends BasesView {
             const menu=this.root.querySelector<HTMLElement>('.manual-order-group-menu');if(menu){menu.empty();this.renderGroupControls(menu);}this.nativeGroupMenu.refresh();
           })();
         },
-      },value=>linkedBoardWidthKey(section.property,groupValueKey(groupIdentity(value,this.app,''))));
+      },value=>linkedBoardWidthKey(section.property,groupValueKey(groupIdentity(value,this.app,''))),!(this.primaryScope&&section.scopes.includes(this.primaryScope))||this.primaryStacks.singletons);
       const details=target.lastElementChild as HTMLDetailsElement;details.open=this.valueMenuOpen.has(section.property);
       details.ontoggle=()=>{if(!details.isConnected)return;if(details.open)this.valueMenuOpen.add(section.property);else this.valueMenuOpen.delete(section.property);};
     };
-    if(readBoardOrders(this.config.get(BOARD_ORDER_KEY)).size) {
+    if(readBoardOrders(this.config.get(BOARD_ORDER_KEY)).size||Object.keys(readPrimaryStackLayouts(this.config.get(PRIMARY_STACKS_KEY)).boards).length) {
       const reset=host.createEl('button',{text:'Reset vertical group positions',cls:'manual-order-reset-group-order'});
       reset.onclick=()=>{
         void (async()=>{
           if(this.editor&&!(await this.editor.save()))return;
-          try{this.config.set(BOARD_ORDER_KEY,null);this.config.set(GROUP_VALUES_KEY,Object.fromEntries(Object.entries(settings).map(([property,value])=>[property,{...value,order:[]}])));this.onDataUpdated();this.nativeGroupMenu.refresh();}
-          catch(error){new Notice(`Could not reset group positions: ${String(error)}`);}
+          const previousOrder=this.config.get(BOARD_ORDER_KEY),previousValues=this.config.get(GROUP_VALUES_KEY),previousStacks=this.config.get(PRIMARY_STACKS_KEY);
+          try{this.config.set(BOARD_ORDER_KEY,null);this.config.set(PRIMARY_STACKS_KEY,null);this.config.set(GROUP_VALUES_KEY,Object.fromEntries(Object.entries(settings).map(([property,value])=>[property,{...value,order:[]}])));this.onDataUpdated();this.nativeGroupMenu.refresh();}
+          catch(error){try{this.config.set(BOARD_ORDER_KEY,previousOrder??null);this.config.set(PRIMARY_STACKS_KEY,previousStacks??null);this.config.set(GROUP_VALUES_KEY,previousValues??null);}catch(rollback){console.error('NosyGrid: could not restore view settings.',rollback);}new Notice(`Could not reset group positions: ${String(error)}`);this.onDataUpdated();}
         })();
       };
     }
@@ -998,7 +1027,7 @@ export class ManualOrderView extends BasesView {
     handle.draggable=movable && !this.plugin.busy && !this.plugin.editorOwner;
     handle.disabled=this.plugin.busy || !!this.plugin.editorOwner;
     handle.ondragstart=event=> {
-      if(this.rowDropPending||!handle.draggable){event.preventDefault();return;}
+      if(this.rowDropPending||this.primaryStacks.active||this.boardOrder.active||this.boardLayout.active||!handle.draggable){event.preventDefault();return;}
       this.rowDragScroll.lock();
       if(!this.selectedRows.has(row.path)){this.selectedRows=new Set([row.path]);this.rowAnchor=row.path;this.paintRowSelection();}
       const paths=[...this.root.querySelectorAll<HTMLElement>('tr[data-row-path]')].map(row=>row.dataset.rowPath!).filter(path=>this.selectedRows.has(path));
@@ -1344,7 +1373,7 @@ export class ManualOrderView extends BasesView {
   }
 
   private async editCell(entry:BasesEntry,property:BasesPropertyId,caret?:number,initialItem?:number) {
-    if(this.loadingEditor || this.disposed || (this.plugin.busy && !this.editor)) return;
+    if(this.loadingEditor || this.disposed || this.primaryStacks.active || this.boardOrder.active || this.boardLayout.active || (this.plugin.busy && !this.editor)) return;
     if(this.plugin.editorOwner && this.plugin.editorOwner!==this) {
       new Notice('Finish editing the active cell first.');return;
     }

@@ -191,7 +191,21 @@ Matching vertical values share a column position as well as a width across horiz
 
 Alignment updates live with shared resizing and is rebuilt on reopen. Empty columns use the shared saved width when available. Collapsed rails remain narrow, with space reserved when another occurrence is expanded so following values remain aligned. Nested boards under different vertical ancestor values have separate alignment scopes; boards under matching vertical ancestors can align through further horizontal sections. Filters and counts still apply only to real or retained groups and their notes.
 
-## Reordering vertical groups
+## Primary group stacks
+
+The outermost grouping level supports independent column stacks when its layout is **Vertical**. This applies to the native first grouping property, or the first NosyGrid grouping rule when there is no native grouping. Existing groups initially remain side by side in their current order. Nested groups travel with their primary group and retain their existing layouts and alignment.
+
+Drag the grip in a primary group's header near another primary group's top or bottom edge to insert it above or below that group in the same column. Drop near a left or right edge to place the dragged group in an adjacent column. The nearest edge determines the action; a horizontal line indicates insertion within a stack, and a vertical line indicates a column position. Empty columns disappear when their last member leaves. Groups have independent heights, so rows do not align across columns. Move near the viewport edges to scroll while dragging; Escape or an invalid drop cancels without changing the saved layout.
+
+With a primary grip focused, **Alt+Up/Down** moves within its column. **Alt+Left/Right** moves to the end of an adjacent visible column or splits the group into a new column at an outer boundary. Left/right movement follows the display direction. You can also split a group from its stack by dropping it beside another member of the same stack.
+
+Expanded groups in one primary column share its width. Resize from any expanded member using the existing resize handle, keyboard steps, or width limits. Double-click a resize handle to restore responsive sizing. A group joining a column adopts its width; a newly split column inherits its source width. Collapsed members retain their narrow rails, while the column stays expanded if another member is open. When all displayed members are collapsed, the column shrinks to rail width.
+
+Primary arrangements and stack widths are stored in the Base view as `manualPrimaryGroupStacks`, separately for each primary grouping scope. Existing order and legacy widths seed the initial arrangement; merely opening the view does not save a stack migration. Hidden and temporarily absent groups retain their saved positions while reserving no visible space. Newly encountered groups append as singleton columns. Switching to Horizontal preserves the saved stacks for switching back.
+
+The primary group-values menu follows column-first order. Its flat reorder grips are available while every saved column contains one group; for multi-group stacks, use the board grips instead. Visibility, colors, and adding/removing values remain available. **Reset vertical group positions** clears saved primary stacks and their stack-specific widths, together with existing vertical group ordering; legacy widths remain available. Positioning whole groups changes view settings, not note properties or row ranks, and does not enter row/edit undo history.
+
+## Reordering nested vertical groups
 
 Drag the grip in a vertical group's header onto the left or right half of another column to place it before or after that value. Matching columns across horizontal sections move together and retain their alignment, shared widths, and individual collapsed states. Collapsed rails also have a grip and can be repositioned. Nested boards under different vertical ancestor values keep separate orders.
 
@@ -203,7 +217,7 @@ Group repositioning changes view settings only. It does not write note propertie
 
 In **Group**, expand **[property] — group values** beneath a vertical grouping rule (or beneath the primary layout control). Each value shows its file count. Check or uncheck a value to show or hide its columns across horizontal sections; **Show all** and **Hide all** change the whole list. Hidden columns reserve no space, and hiding values never changes or deletes their notes. The list stays expanded while changing settings.
 
-Drag a value using its grip to change the column order, or focus its grip and press Alt+Up/Down. Menu ordering applies across boards for that grouping property, including separate nested board scopes. Header dragging can still customize individual nested scopes afterward. Use **Reset vertical group positions** to return to the grouping sort order.
+Drag a value using its grip to change the column order, or focus its grip and press Alt+Up/Down. Menu ordering applies across boards for that grouping property, including separate nested board scopes. Header dragging can still customize individual nested scopes afterward. For primary groups, flat menu reordering is available only for singleton columns; use board grips to arrange multi-group stacks. Use **Reset vertical group positions** to return to the grouping sort order.
 
 For note properties, enter a **New group value** and choose **Add group**. This creates an empty destination column without creating a note or writing frontmatter. Drop rows into it to assign the value. Values follow the property's type, including numbers and wiki links; links keep their aliases and standard Obsidian interactions. Duplicate values share one column. File and formula properties offer visibility/order controls but cannot create arbitrary unused values through this menu. Nested values appear under existing parent groups; an empty outer vertical grouping can also receive a new value before any files match the Base.
 

@@ -15,6 +15,7 @@ Organize notes in a grid, drag rows between groups, edit their properties in pla
 - **Links and lists.** Complete `[[wiki links]]` as you type, use aliases and native link interactions, drag links into other cells, drag file names or selected row handles to other destinations, and add or remove list items.
 - **Selection and clipboard.** Drag across cells to select a range; copy complete values or paste into selected cells. Ctrl/Cmd-click row handles to toggle rows, and Shift-click to select a row range.
 - **Nested grouping.** Choose horizontal or vertical layout per grouping level. Matching vertical columns stay aligned across horizontal sections, even when empty.
+- **Primary group stacks.** Arrange outermost vertical groups side by side or above and below one another. Groups in each independent column share a resizable width, with positions saved per Base view.
 - **Move notes between groups.** Drag one row or a selected block into another group to update its properties. A floating preview follows the cursor; shadow placeholders mark the source positions. Cancelled or invalid drops restore the rows.
 - **Saved layout and colors.** Resize, collapse, hide and reorder columns. Assign a color to each group value. View settings persist in the Base.
 - **Native summaries.** Choose a summary per property and see it in each group and in the overall total. Built-ins use Obsidian's summary engine; existing custom summaries can be selected by name.
@@ -98,6 +99,10 @@ Grouping levels run from outermost to innermost. Each level can be horizontal or
 
 Drag the right edge to resize a column. Click its header to collapse it to a rail. Drag a group-header grip to reposition columns; drag a row grip to move notes. These are separate actions.
 
+For outermost groups in **Vertical** layout, drag a header grip near another group's top or bottom edge to join its column, or near a side edge to create an adjacent column. Resize any expanded member to resize its stack; double-click the resize edge to restore responsive sizing. With the grip focused, **Alt+Up/Down** reorders within a column and **Alt+Left/Right** moves to an adjacent column or splits at an outer boundary. Nested groups retain their existing layouts.
+
+The group-values menu follows column-first order. Its reorder grips remain available for singleton columns; use board grips when groups are stacked. **Reset vertical group positions** clears the stack arrangement and its stack-specific widths. Switching to Horizontal preserves the arrangement for switching back.
+
 In **Group → [property] — group values**, use **Add group** to create an unused value or **Add empty group** for an unset property. The trash icon removes a value from this view’s catalogue and display. It does not delete notes or change their properties; notes matching a removed value stop appearing in this view. Removal survives refresh and reopening, even while notes still use the value. Add the same value again to restore it. Hiding a column remains a separate, reversible visibility setting. Grouping-level creation is labelled **Add group by**.
 
 ![Group controls for visibility, ordering and per-value colors](docs/images/group-controls.png)
@@ -132,7 +137,7 @@ Formula and computed file properties are read-only. A layout rebuild is still ne
 - The test suite covers editing, selection, clipboard, links, row/group moves, cancellation, persistence, colors, summaries and browser layouts.
 - A tag matching `manifest.json` (for example, `0.26.1`, without `v`) triggers the release workflow.
 
-See [detailed usage notes](docs/usage.md), [release notes](docs/releases/0.30.0.md) and [Obsidian's plugin submission guide](https://docs.obsidian.md/Plugins/Releasing/Submit%20your%20plugin).
+See [detailed usage notes](docs/usage.md), [release notes](docs/releases/0.31.0.md) and [Obsidian's plugin submission guide](https://docs.obsidian.md/Plugins/Releasing/Submit%20your%20plugin).
 
 ## Feedback and license
 
